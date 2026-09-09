@@ -1,7 +1,7 @@
 import '../testing/env.js';
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { extrairMensagem, lerFeedback, tokenValido } from './inbound.js';
+import { extrairMensagem, idDaCitacao, lerFeedback, tokenValido } from './inbound.js';
 
 /** Payload como a Evolution v2 manda uma mensagem simples. */
 const simples = (texto: string, fromMe = false) => ({
@@ -136,5 +136,49 @@ describe('extrairMensagem — id da mensagem de entrada', () => {
     const msg = extrairMensagem(p);
     assert.equal(msg?.id, null);
     assert.equal(msg?.texto, '1');
+  });
+});
+
+describe('idDaCitacao — onde a Evolution esconde o id da mensagem citada', () => {
+  const alvo = 'MSG_CITADA';
+
+  test('dentro de message.extendedTextMessage.contextInfo', () => {
+    assert.equal(
+      idDaCitacao({ message: { extendedTextMessage: { text: '1', contextInfo: { stanzaId: alvo } } } }),
+      alvo,
+    );
+  });
+
+  test('içado para data.contextInfo — a forma que quebrou em produção', () => {
+    assert.equal(
+      idDaCitacao({ message: { extendedTextMessage: { text: '1' } }, contextInfo: { stanzaId: alvo } }),
+      alvo,
+    );
+  });
+
+  test('dentro de message.contextInfo', () => {
+    assert.equal(idDaCitacao({ message: { contextInfo: { stanzaId: alvo } } }), alvo);
+  });
+
+  test('sob o nome alternativo quotedMessageId', () => {
+    assert.equal(idDaCitacao({ contextInfo: { quotedMessageId: alvo } }), alvo);
+  });
+
+  test('mensagem sem citação devolve null', () => {
+    assert.equal(idDaCitacao({ message: { conversation: '1' } }), null);
+    assert.equal(idDaCitacao({}), null);
+  });
+
+  test('extrairMensagem enxerga a citação içada', () => {
+    const msg = extrairMensagem({
+      event: 'MESSAGES_UPSERT',
+      data: {
+        key: { remoteJid: '5547996489767@s.whatsapp.net', fromMe: false, id: 'R1' },
+        message: { extendedTextMessage: { text: '1' } },
+        contextInfo: { stanzaId: alvo },
+      },
+    });
+    assert.equal(msg?.texto, '1');
+    assert.equal(msg?.respondendoA, alvo);
   });
 });

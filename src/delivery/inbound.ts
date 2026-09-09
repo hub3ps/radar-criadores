@@ -76,7 +76,6 @@ export function extrairMensagem(payload: unknown): MensagemRecebida | null {
 
   const mensagem = comoRegistro(dados.message);
   const estendida = comoRegistro(mensagem?.extendedTextMessage);
-  const contexto = comoRegistro(estendida?.contextInfo);
 
   const texto = comoTexto(mensagem?.conversation) ?? comoTexto(estendida?.text);
   if (texto === null) return null;
@@ -86,8 +85,35 @@ export function extrairMensagem(payload: unknown): MensagemRecebida | null {
     de: numeroDoJid(jid),
     texto: texto.trim(),
     minha: chave.fromMe === true,
-    respondendoA: comoTexto(contexto?.stanzaId),
+    respondendoA: idDaCitacao(dados),
   };
+}
+
+/**
+ * Acha o id da mensagem citada.
+ *
+ * A Evolution muda de lugar entre versões: às vezes o `contextInfo` vem dentro
+ * de `message.extendedTextMessage`, às vezes içado para `data.contextInfo`.
+ * Procurar em um único lugar fazia toda resposta citada cair no fallback por
+ * número — que é justamente o caminho que atribuía feedback ao item errado.
+ */
+export function idDaCitacao(dados: Record<string, unknown>): string | null {
+  const mensagem = comoRegistro(dados.message);
+  const estendida = comoRegistro(mensagem?.extendedTextMessage);
+
+  const candidatos = [
+    comoRegistro(estendida?.contextInfo),
+    comoRegistro(mensagem?.contextInfo),
+    comoRegistro(dados.contextInfo),
+    comoRegistro(comoRegistro(dados.message)?.['messageContextInfo']),
+  ];
+
+  for (const contexto of candidatos) {
+    const id = comoTexto(contexto?.stanzaId) ?? comoTexto(contexto?.['quotedMessageId']);
+    if (id !== null) return id;
+  }
+
+  return null;
 }
 
 /** `"1"`, `" 2 "`, `"3."` → 1 | 2 | 3. Qualquer outra coisa → null. */
@@ -192,9 +218,10 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
     }
   }
 
-  const delivery = mensagem.respondendoA
-    ? ((await porMessageId(mensagem.respondendoA)) ?? (await ultimaEnviadaPara(mensagem.de)))
-    : await ultimaEnviadaPara(mensagem.de);
+  // Citada = intenção inequívoca sobre QUAL item. Fallback = palpite por recência.
+  // A distinção importa: só a citada pode corrigir um feedback já dado.
+  const citada = mensagem.respondendoA ? await porMessageId(mensagem.respondendoA) : null;
+  const delivery = citada ?? (await ultimaEnviadaPara(mensagem.de));
 
   if (!delivery) {
     logger.warn('feedback sem delivery correspondente', {
@@ -205,6 +232,8 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
     return { status: 'sem-vinculo', motivo: 'nenhum delivery bate com a resposta' };
   }
 
+  // Primeira resposta vale. Sobrescrever exigiria distinguir correção deliberada
+  // de reenvio, e um erro nessa distinção apaga dado bom de calibragem.
   if (delivery.feedback !== null) {
     return { status: 'ignorado', deliveryId: delivery.id, motivo: 'feedback já registrado' };
   }
@@ -221,7 +250,14 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
 
   if (error) throw new Error(`gravação de feedback: ${error.message}`);
 
-  logger.info('feedback gravado', { deliveryId: delivery.id, feedback, de: mensagem.de });
+  // `via` mostra se a citação foi lida ou se caiu no palpite por recência —
+  // é o que teria denunciado o problema de hoje logo na primeira resposta.
+  logger.info('feedback gravado', {
+    deliveryId: delivery.id,
+    feedback,
+    via: citada ? 'citação' : 'fallback por número',
+    de: mensagem.de,
+  });
   return { status: 'gravado', deliveryId: delivery.id };
 }
 

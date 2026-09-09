@@ -23,7 +23,7 @@ Quando a validação terminar, ligar é questão de trocar `false` por `true`.
 | Runtime | Node.js 22 + TypeScript 7 (ESM, `nodenext`) |
 | Banco | Supabase / Postgres, schema `radar`, via `@supabase/supabase-js` |
 | Agendamento | `node-cron` dentro do próprio processo |
-| LLM | SDK oficial da Anthropic (`@anthropic-ai/sdk`) com structured outputs |
+| LLM | OpenRouter (API compatível com a da OpenAI), via `fetch` |
 | WhatsApp | Evolution API (envio + webhook de resposta) |
 | Social | Apify via REST, atrás de uma interface `SocialProvider` |
 | HTTP | `node:http` da stdlib — sem Express |
@@ -31,7 +31,7 @@ Quando a validação terminar, ligar é questão de trocar `false` por `true`.
 | Deploy | Docker (processo contínuo) no Easypanel, numa VPS Linux |
 
 Sem framework de mais: nada de NestJS, nada de ORM. As únicas dependências de runtime
-são o SDK da Anthropic, o cliente do Supabase, `node-cron`, `rss-parser`, `zod` e `dotenv`.
+são o cliente do Supabase, `node-cron`, `rss-parser`, `zod` e `dotenv`.
 
 ## Arquitetura
 
@@ -66,7 +66,7 @@ src/
       base.ts       # coletor social genérico, compartilhado pelas duas redes
   core/
     dedupe.ts       # url canônica + url_hash
-    scorer.ts       # 1 chamada Claude por item, JSON estrito
+    scorer.ts       # 1 chamada por item via OpenRouter, JSON estrito
     formatter.ts    # monta a mensagem do WhatsApp
     regras.ts       # os 4 controles de ruído (existem, desligados)
   delivery/
@@ -159,12 +159,18 @@ npm run job -- dispatch
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Service role. O processo é backend e escreve em todas as tabelas |
 | `SUPABASE_SCHEMA` | `radar` | Schema usado pelo cliente |
 
-### Anthropic
+### OpenRouter (scorer)
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Chave da API |
-| `ANTHROPIC_MODEL` | `claude-opus-5` | Modelo do scorer |
-| `ANTHROPIC_EFFORT` | `medium` | `low` / `medium` / `high` / `xhigh` / `max` |
+| `OPENROUTER_API_KEY` | — | Chave da API |
+| `OPENROUTER_MODEL` | `anthropic/claude-opus-5` | Formato `fornecedor/modelo` |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Trocar só para apontar noutro gateway |
+| `OPENROUTER_REASONING_EFFORT` | `none` | `none` / `low` / `medium` / `high` |
+
+A API do OpenRouter é compatível com a da **OpenAI**, não com a da Anthropic — por
+isso o modelo vai como `anthropic/claude-opus-5` e o scorer fala HTTP direto, sem SDK.
+O pedido usa `response_format: json_schema` com `strict`; se o endpoint roteado não
+suportar, o scorer repete sem o schema e cai no parse defensivo.
 
 ### Evolution API
 | Variável | Padrão | Descrição |
@@ -262,7 +268,7 @@ chamar no webhook.
 - [x] Migração SQL do schema `radar` + seed de exemplo
 - [x] Estrutura completa de pastas, tipos e interfaces
 - [x] Coletor RSS de ponta a ponta (feed → corpo do artigo → dedupe → `items`)
-- [x] Scorer (structured output do SDK, parse defensivo, `falho` sem derrubar o job)
+- [x] Scorer via OpenRouter (json_schema estrito, fallback sem schema, parse defensivo)
 - [x] Envio via Evolution API v2 + webhook de feedback
 - [x] Coletores de Instagram e TikTok atrás de `SocialProvider`, com dry-run
 - [x] Os 4 controles de ruído implementados e testados, desligados por `.env`
@@ -274,7 +280,7 @@ chamar no webhook.
 O que depende de credencial que ainda não existe aqui foi escrito e tipado, mas nunca
 rodou contra o serviço de verdade:
 
-- a chamada ao Claude no `scorer` (sem `ANTHROPIC_API_KEY` nesta máquina)
+- a chamada ao modelo no `scorer` (sem `OPENROUTER_API_KEY` nesta máquina)
 - o envio pela Evolution e o webhook de volta (sem instância conectada)
 - as queries no Supabase (sem projeto)
 - os actors da Apify (`SOCIAL_DRY_RUN=true` por padrão)
@@ -285,9 +291,12 @@ rode `npm run job -- collect:rss` e confira a tabela `items`; depois
 
 ### Decisões que valem revisar depois da calibragem
 
-- **Modelo do scorer**: está em `claude-opus-5`, ~US$ 0,014 por item. A ~100 itens/dia
-  dá ~US$ 40/mês. Se o volume subir muito, `ANTHROPIC_MODEL=claude-sonnet-5` corta para
-  cerca de um terço — mas na calibragem a qualidade da nota é justamente o que se mede.
+- **Modelo do scorer**: está em `anthropic/claude-opus-5` (US$ 5/M entrada, US$ 25/M saída
+  no OpenRouter), ~US$ 0,014 por item. A ~100 itens/dia dá ~US$ 40/mês, mais a margem do
+  OpenRouter. Se o volume subir, `anthropic/claude-sonnet-5` corta para cerca de um terço —
+  mas na calibragem a qualidade da nota é justamente o que se mede.
+- **`OPENROUTER_REASONING_EFFORT`** está em `none` para reduzir o que pode dar errado no
+  primeiro dia. Se as notas vierem rasas ou pouco discriminantes, suba para `low`/`medium`.
 - **`items.embedding`** existe na tabela e não é usada por nada. É o caminho para trocar
   o cooldown de tema (hoje Jaccard sobre o título) por similaridade semântica.
 - **Fallback do feedback**: sem `stanzaId`, a resposta `1`/`2`/`3` é atribuída à última

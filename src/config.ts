@@ -21,10 +21,15 @@ const Env = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   SUPABASE_SCHEMA: z.string().default('radar'),
 
-  // --- Anthropic ---
-  ANTHROPIC_API_KEY: z.string().min(1),
-  ANTHROPIC_MODEL: z.string().default('claude-opus-5'),
-  ANTHROPIC_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
+  // --- OpenRouter (scorer) ---
+  // A API do OpenRouter é compatível com a da OpenAI, não com a da Anthropic:
+  // o modelo vai no formato `fornecedor/modelo`.
+  OPENROUTER_API_KEY: z.string().min(1),
+  OPENROUTER_MODEL: z.string().default('anthropic/claude-opus-5'),
+  OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
+  // `none` não manda o parâmetro de raciocínio — mais barato e menos coisa
+  // para o roteamento recusar. Suba se as notas vierem rasas.
+  OPENROUTER_REASONING_EFFORT: z.enum(['none', 'low', 'medium', 'high']).default('none'),
 
   // --- Evolution API (v2) ---
   EVOLUTION_BASE_URL: z.string().url(),
@@ -88,10 +93,11 @@ function carregar() {
       serviceRoleKey: e.SUPABASE_SERVICE_ROLE_KEY,
       schema: e.SUPABASE_SCHEMA,
     },
-    anthropic: {
-      apiKey: e.ANTHROPIC_API_KEY,
-      modelo: e.ANTHROPIC_MODEL,
-      effort: e.ANTHROPIC_EFFORT,
+    openrouter: {
+      apiKey: e.OPENROUTER_API_KEY,
+      modelo: e.OPENROUTER_MODEL,
+      baseUrl: e.OPENROUTER_BASE_URL.replace(/\/+$/, ''),
+      reasoningEffort: e.OPENROUTER_REASONING_EFFORT,
     },
     evolution: {
       baseUrl: e.EVOLUTION_BASE_URL.replace(/\/+$/, ''),

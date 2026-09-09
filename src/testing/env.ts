@@ -9,7 +9,7 @@
 const PADROES: Record<string, string> = {
   SUPABASE_URL: 'https://projeto.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'chave-de-teste',
-  ANTHROPIC_API_KEY: 'chave-de-teste',
+  OPENROUTER_API_KEY: 'chave-de-teste',
   EVOLUTION_BASE_URL: 'https://evolution.teste',
   EVOLUTION_INSTANCE: 'teste',
   EVOLUTION_API_KEY: 'chave-de-teste',

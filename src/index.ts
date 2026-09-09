@@ -74,7 +74,7 @@ function agendar(nome: string, expressao: string, tarefa: () => Promise<unknown>
 function main(): void {
   logger.info('radar-criadores subindo', {
     tz: config.runtime.tz,
-    modelo: config.anthropic.modelo,
+    modelo: config.openrouter.modelo,
     dryRunSocial: config.apify.dryRun,
     regras: config.regras,
   });

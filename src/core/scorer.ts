@@ -46,6 +46,13 @@ export class ErroScorer extends Error {
 const LIMITE_TEXTO = 12_000;
 const TIMEOUT_MS = 90_000;
 
+/**
+ * A resposta em si tem ~300 tokens. A folga existe porque token de raciocínio
+ * conta como saída e entra nesta conta — com o teto antigo de 2000, um item mais
+ * denso truncava antes de sobrar espaço para o JSON. Só se paga o que for gerado.
+ */
+const MAX_TOKENS = 8000;
+
 const INSTRUCOES = `Você avalia novidades para uma criadora de conteúdo brasileira.
 
 Para cada item, decida o quanto ele merece virar vídeo para ESTA criadora
@@ -153,7 +160,7 @@ interface RespostaOpenRouter {
 function montarCorpo(perfil: string, conteudoItem: string, comSchema: boolean): Record<string, unknown> {
   const corpo: Record<string, unknown> = {
     model: config.openrouter.modelo,
-    max_tokens: 2000,
+    max_tokens: MAX_TOKENS,
     messages: [
       { role: 'system', content: `${INSTRUCOES}\n\n---\n\n${perfil}` },
       { role: 'user', content: conteudoItem },
@@ -169,9 +176,10 @@ function montarCorpo(perfil: string, conteudoItem: string, comSchema: boolean): 
     corpo.provider = { require_parameters: true };
   }
 
-  if (config.openrouter.reasoningEffort !== 'none') {
-    corpo.reasoning = { effort: config.openrouter.reasoningEffort };
-  }
+  // Mandar `effort: 'none'` explicitamente é o que DESLIGA o raciocínio.
+  // Omitir o parâmetro não desliga: o Opus 5 pensa por padrão, e esses tokens
+  // contam como saída — foi o que truncou a resposta em produção.
+  corpo.reasoning = { effort: config.openrouter.reasoningEffort };
 
   return corpo;
 }

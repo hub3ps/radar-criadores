@@ -7,7 +7,23 @@ const NUM = '5511900000001';
 
 async function limpar() {
   const o = await onboardingDe(NUM);
-  if (o?.creator_id) await db.from('creators').delete().eq('id', o.creator_id);
+
+  // As fontes que este teste cria ficariam no banco e seriam coletadas de
+  // verdade pelo cron — foi o que poluiu a base na primeira vez.
+  if (o?.creator_id) {
+    const { data } = await db.from('creator_sources').select('source_id').eq('creator_id', o.creator_id);
+    const ids = ((data ?? []) as { source_id: string }[]).map((l) => l.source_id);
+    await db.from('creators').delete().eq('id', o.creator_id);
+    for (const id of ids) {
+      const { count } = await db
+        .from('creator_sources')
+        .select('source_id', { count: 'exact', head: true })
+        .eq('source_id', id);
+      // Só remove a fonte se nenhuma outra criadora ficou usando.
+      if ((count ?? 0) === 0) await db.from('sources').delete().eq('id', id);
+    }
+  }
+
   await db.from('onboardings').delete().eq('whatsapp', NUM);
   await db.from('convites').delete().eq('whatsapp', NUM);
 }

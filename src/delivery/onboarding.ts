@@ -106,14 +106,20 @@ export async function extrairFontes(
 // Estado
 // ---------------------------------------------------------------------------
 
-export async function convidada(numero: string): Promise<boolean> {
+/** O convite que corresponde a este número, casando as variantes do nono dígito. */
+export async function conviteDe(numero: string): Promise<string | null> {
   const { data, error } = await db.from('convites').select('whatsapp');
   if (error) throw new Error(`consulta de convites: ${error.message}`);
 
   const doNumero = new Set(variantesWhatsapp(numero));
-  return ((data ?? []) as { whatsapp: string }[]).some((c) =>
+  const achado = ((data ?? []) as { whatsapp: string }[]).find((c) =>
     variantesWhatsapp(c.whatsapp).some((v) => doNumero.has(v)),
   );
+  return achado?.whatsapp ?? null;
+}
+
+export async function convidada(numero: string): Promise<boolean> {
+  return (await conviteDe(numero)) !== null;
 }
 
 export async function onboardingDe(numero: string): Promise<Onboarding | null> {
@@ -162,11 +168,20 @@ export function montarResumo(o: Onboarding): string {
 
 /** Cria a criadora e as fontes. Só roda depois do "sim". */
 async function concluir(o: Onboarding): Promise<string> {
+  // O JID do WhatsApp pode vir sem o nono dígito, e é dele que sai `o.whatsapp`.
+  // O número do convite foi digitado por quem opera e é a forma que já sabemos
+  // que a Evolution aceita no envio — por isso ele tem preferência.
+  const paraEnvio = (await conviteDe(o.whatsapp)) ?? o.whatsapp;
+
+  if (paraEnvio !== o.whatsapp) {
+    logger.info('número normalizado pelo convite', { doJid: o.whatsapp, doConvite: paraEnvio });
+  }
+
   const { data: criada, error: erroCreator } = await db
     .from('creators')
     .insert({
       nome: o.nicho ? `Criadora — ${o.nicho}`.slice(0, 60) : 'Criadora',
-      whatsapp: o.whatsapp,
+      whatsapp: paraEnvio,
       nicho: o.nicho,
       perfil_texto: o.perfil_texto ?? '',
       ativo: true,

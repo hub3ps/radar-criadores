@@ -242,6 +242,25 @@ suportar, o scorer repete sem o schema e cai no parse defensivo.
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BACKFILL_PRIMEIRA_COLETA` | `false` | Na 1ª coleta de uma fonte nova, marca o histórico como visto sem entregar |
 
+## Quão recente é o que ela recebe
+
+Quatro camadas, e elas medem coisas diferentes:
+
+| Camada | Mede | Efeito |
+|---|---|---|
+| Backfill por fonte | primeira coleta | o histórico do feed nunca é entregue |
+| Corte por criadora | `coletado_em` vs cadastro dela | ela só recebe o que chegou depois de entrar |
+| `ITEM_VALIDADE_HORAS` | `coletado_em` | teto de quanto tempo um item fica na fila |
+| `ITEM_IDADE_MAX_HORAS` | `publicado_em` | teto da idade real da notícia |
+
+As três primeiras medem quando **nós** vimos o item. Só a última olha a data da
+fonte — e é ela que protege o caso em que o processo fica fora do ar e volta:
+ao voltar, ele coleta o feed inteiro, tudo parece novo, e sem esse filtro uma
+matéria de três dias chegaria como se fosse deste minuto.
+
+Quando o feed não informa `publicado_em` (parte das redes sociais não informa),
+a data de coleta é usada como melhor palpite disponível.
+
 ## Formato da mensagem
 
 ```

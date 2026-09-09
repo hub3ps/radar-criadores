@@ -49,6 +49,25 @@ async function fontesDaCriadora(creatorId: string): Promise<Map<string, string>>
  *   criadora: sem este corte, quem se cadastra numa fonte que já está sendo
  *   coletada recebe o backlog inteiro de 48h no primeiro minuto.
  */
+/**
+ * O item foi publicado recentemente?
+ *
+ * Todos os outros filtros medem `coletado_em` — quando NÓS vimos o item. Se o
+ * processo ficar fora do ar e voltar, ele coleta o feed inteiro naquele momento
+ * e tudo parece novo, inclusive matéria de três dias atrás. Aqui olhamos a data
+ * da fonte. Sem `publicado_em` (parte dos feeds e das redes não informa), a
+ * coleta é o melhor palpite disponível.
+ */
+export function recemPublicado(item: Item): boolean {
+  const quando = item.publicado_em ?? item.coletado_em;
+  const data = new Date(quando).getTime();
+  if (Number.isNaN(data)) return true;
+
+  // Data no futuro é relógio adiantado da fonte, não motivo para descartar.
+  const idadeHoras = (Date.now() - data) / 3_600_000;
+  return idadeHoras <= config.runtime.itemIdadeMaxHoras;
+}
+
 async function itensPendentes(creator: Creator, sourceIds: string[], limite: number): Promise<Item[]> {
   if (sourceIds.length === 0) return [];
 
@@ -69,7 +88,7 @@ async function itensPendentes(creator: Creator, sourceIds: string[], limite: num
 
   if (error) throw new Error(`busca de itens: ${error.message}`);
 
-  const candidatos = (itens ?? []) as Item[];
+  const candidatos = ((itens ?? []) as Item[]).filter(recemPublicado);
   if (candidatos.length === 0) return [];
 
   const { data: existentes, error: erroDeliveries } = await db

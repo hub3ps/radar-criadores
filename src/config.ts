@@ -67,8 +67,12 @@ const Env = z.object({
   PROCESS_LOTE_MAX: inteiro(25),
   // Quantas mensagens o `dispatch` manda por rodada.
   DISPATCH_LOTE_MAX: inteiro(10),
-  // Itens mais velhos que isso não viram delivery — novidade velha não é novidade.
+  // Itens COLETADOS há mais tempo que isso não viram delivery.
   ITEM_VALIDADE_HORAS: inteiro(48),
+  // Itens PUBLICADOS há mais tempo que isso não viram delivery, mesmo que a
+  // gente tenha acabado de coletá-los. É o que protege contra receber notícia
+  // de três dias como se fosse nova quando o processo volta de uma queda.
+  ITEM_IDADE_MAX_HORAS: inteiro(24),
   // Buscar o corpo do artigo na URL quando o feed só entrega um resumo curto.
   RSS_BUSCAR_CORPO: booleano(true),
 });
@@ -132,6 +136,7 @@ function carregar() {
       processLoteMax: e.PROCESS_LOTE_MAX,
       dispatchLoteMax: e.DISPATCH_LOTE_MAX,
       itemValidadeHoras: e.ITEM_VALIDADE_HORAS,
+      itemIdadeMaxHoras: e.ITEM_IDADE_MAX_HORAS,
       rssBuscarCorpo: e.RSS_BUSCAR_CORPO,
     },
   });

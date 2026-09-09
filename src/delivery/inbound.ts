@@ -34,6 +34,8 @@ function comoTexto(valor: unknown): string | null {
 }
 
 export interface MensagemRecebida {
+  /** id da mensagem recebida. É a chave de idempotência. */
+  id: string | null;
   /** Número de quem escreveu, só dígitos. */
   de: string;
   /** Texto puro da mensagem. */
@@ -80,6 +82,7 @@ export function extrairMensagem(payload: unknown): MensagemRecebida | null {
   if (texto === null) return null;
 
   return {
+    id: comoTexto(chave.id),
     de: numeroDoJid(jid),
     texto: texto.trim(),
     minha: chave.fromMe === true,
@@ -167,6 +170,28 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
     return { status: 'ignorado', motivo: 'texto não é 1, 2 ou 3' };
   }
 
+  // A mesma mensagem pode chegar duas vezes: webhook global e por-instância
+  // ligados juntos, ou reenvio da Evolution. Sem esta checagem, a cópia gravava
+  // no PRÓXIMO delivery da fila e inventava uma resposta que ninguém deu.
+  if (mensagem.id) {
+    const { data: jaUsada, error: erroDup } = await db
+      .from('deliveries')
+      .select('id')
+      .eq('feedback_message_id', mensagem.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (erroDup) throw new Error(`checagem de duplicata: ${erroDup.message}`);
+    if (jaUsada) {
+      logger.debug('webhook duplicado ignorado', { messageId: mensagem.id });
+      return {
+        status: 'ignorado',
+        deliveryId: (jaUsada as { id: string }).id,
+        motivo: 'esta mensagem de entrada já foi contabilizada',
+      };
+    }
+  }
+
   const delivery = mensagem.respondendoA
     ? ((await porMessageId(mensagem.respondendoA)) ?? (await ultimaEnviadaPara(mensagem.de)))
     : await ultimaEnviadaPara(mensagem.de);
@@ -186,7 +211,11 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
 
   const { error } = await db
     .from('deliveries')
-    .update({ feedback, feedback_em: new Date().toISOString() })
+    .update({
+      feedback,
+      feedback_em: new Date().toISOString(),
+      feedback_message_id: mensagem.id,
+    })
     .eq('id', delivery.id)
     .is('feedback', null);
 

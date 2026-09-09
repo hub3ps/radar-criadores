@@ -123,3 +123,18 @@ describe('extrairMensagem — formatos que a Evolution manda de verdade', () => 
     assert.equal(extrairMensagem(comEvento('contacts.update')), null);
   });
 });
+
+describe('extrairMensagem — id da mensagem de entrada', () => {
+  test('captura key.id, que é a chave de idempotência', () => {
+    assert.equal(extrairMensagem(simples('1'))?.id, 'ABC123');
+    assert.equal(extrairMensagem(resposta('2', 'ORIG'))?.id, 'DEF456');
+  });
+
+  test('payload sem key.id não quebra — vira null', () => {
+    const p = simples('1');
+    delete (p.data.key as Record<string, unknown>).id;
+    const msg = extrairMensagem(p);
+    assert.equal(msg?.id, null);
+    assert.equal(msg?.texto, '1');
+  });
+});

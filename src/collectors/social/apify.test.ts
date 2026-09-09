@@ -89,3 +89,40 @@ describe('normalizarRegistro', () => {
     assert.equal(normalizarRegistro({ url: 'https://x/1' }, 'instagram', 'fulana')?.autor, '@fulana');
   });
 });
+
+describe('normalizarRegistro — formato real do scraptik/tiktok-api', () => {
+  // Registro capturado de uma chamada de verdade ao actor.
+  const aweme = {
+    aweme_id: '7683620035331509512',
+    desc: 'Olha quem voltou! Quem disse que não dá pra fazer história?',
+    create_time: 1788984000,
+    author: { uid: '6780674060038964229', unique_id: 'netflixbrasil', nickname: 'Netflix Brasil' },
+    share_url: 'https://www.tiktok.com/@netflixbrasil/video/7683620035331509512?_r=1&u_code=f119',
+    region: 'BR',
+  };
+
+  test('extrai url, legenda, autor e data do formato cru da API do TikTok', () => {
+    const p = normalizarRegistro(aweme, 'tiktok', 'netflixbrasil');
+    assert.equal(p?.url, 'https://www.tiktok.com/@netflixbrasil/video/7683620035331509512');
+    assert.equal(p?.autor, '@netflixbrasil');
+    assert.equal(p?.publicado_em, new Date(1788984000 * 1000).toISOString());
+    assert.match(p?.titulo ?? '', /^Olha quem voltou/);
+  });
+
+  test('tira os rastreadores da url — o dedupe depende da forma canônica', () => {
+    // share_url vem com _r, u_code e sharer_language; a mesma publicação
+    // apareceria como item novo a cada coleta se eles ficassem.
+    const p = normalizarRegistro(aweme, 'tiktok', 'netflixbrasil');
+    assert.ok(!p?.url.includes('?'), 'não deveria sobrar query string');
+  });
+
+  test('cai em share_info.share_url quando share_url não vem', () => {
+    const { share_url: _fora, ...sem } = aweme;
+    const p = normalizarRegistro(
+      { ...sem, share_info: { share_url: 'https://www.tiktok.com/@x/video/1?a=b' } },
+      'tiktok',
+      'netflixbrasil',
+    );
+    assert.equal(p?.url, 'https://www.tiktok.com/@x/video/1');
+  });
+});

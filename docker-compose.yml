@@ -1,0 +1,21 @@
+# Roda o serviço local do mesmo jeito que ele roda no Easypanel.
+#   docker compose up --build
+services:
+  radar:
+    build: .
+    env_file: .env
+    environment:
+      # Sobrescreve o que estiver no .env: dentro do container a porta é fixa.
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    restart: unless-stopped
+    # Mesmo healthcheck que o Easypanel usa.
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Tempo para o encerramento gracioso terminar o job em andamento.
+    stop_grace_period: 40s

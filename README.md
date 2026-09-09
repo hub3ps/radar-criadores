@@ -1,0 +1,295 @@
+# radar-criadores
+
+Agente que monitora fontes de notícias e perfis sociais, identifica o que é relevante
+para uma criadora de conteúdo específica e manda um alerta no WhatsApp com resumo e
+um ângulo de gancho para vídeo.
+
+O valor está na velocidade: quem grava primeiro sobre a novidade sai na frente.
+
+## Estado atual — fase de calibragem
+
+Uma única usuária real. Nesta fase o sistema envia **todos** os itens coletados, sem
+filtro de score. O score é calculado e aparece na mensagem, mas não bloqueia nada.
+O objetivo é avaliar item a item e descobrir onde o corte deve ficar.
+
+Os quatro controles de ruído (filtro de score, teto diário, janela de silêncio,
+cooldown de tema) estão implementados e testados, porém **desligados por `.env`**.
+Quando a validação terminar, ligar é questão de trocar `false` por `true`.
+
+## Stack
+
+| Camada | Escolha |
+|---|---|
+| Runtime | Node.js 22 + TypeScript 7 (ESM, `nodenext`) |
+| Banco | Supabase / Postgres, schema `radar`, via `@supabase/supabase-js` |
+| Agendamento | `node-cron` dentro do próprio processo |
+| LLM | SDK oficial da Anthropic (`@anthropic-ai/sdk`) com structured outputs |
+| WhatsApp | Evolution API (envio + webhook de resposta) |
+| Social | Apify via REST, atrás de uma interface `SocialProvider` |
+| HTTP | `node:http` da stdlib — sem Express |
+| Testes | `node:test` da stdlib — sem framework |
+| Deploy | Docker (processo contínuo) no Easypanel, numa VPS Linux |
+
+Sem framework de mais: nada de NestJS, nada de ORM. As únicas dependências de runtime
+são o SDK da Anthropic, o cliente do Supabase, `node-cron`, `rss-parser`, `zod` e `dotenv`.
+
+## Arquitetura
+
+Um único processo Node faz tudo:
+
+```
+                    ┌──────────────── processo único ────────────────┐
+  RSS  ─┐           │                                                │
+  IG   ─┼─ collect ─┼─→ radar.items ─→ process ─→ radar.deliveries ──┼─→ dispatch ─→ WhatsApp
+  TikTok┘  (cron)   │   (dedupe por     (cron)     (enviado_em NULL)  │    (cron)
+                    │    url_hash)      + scorer                      │
+                    │                                                │
+                    │   node:http  ──→  GET /health                  │
+                    │             └──→  POST /webhook/evolution ──→ radar.deliveries.feedback
+                    └────────────────────────────────────────────────┘
+```
+
+Três jobs desacoplados pelo banco. Cada um pode falhar e ser repetido sem estragar
+o anterior — `collect` não sabe que `dispatch` existe.
+
+```
+src/
+  collectors/
+    types.ts        # interface Collector, tipo RawItem normalizado
+    rss.ts
+    instagram.ts    # = criarColetorSocial('instagram', apifyProvider)
+    tiktok.ts       # = criarColetorSocial('tiktok', apifyProvider)
+    index.ts        # registro de coletores por tipo de fonte
+    social/
+      provider.ts   # interface SocialProvider
+      apify.ts      # implementação Apify (REST), com dry-run
+      base.ts       # coletor social genérico, compartilhado pelas duas redes
+  core/
+    dedupe.ts       # url canônica + url_hash
+    scorer.ts       # 1 chamada Claude por item, JSON estrito
+    formatter.ts    # monta a mensagem do WhatsApp
+    regras.ts       # os 4 controles de ruído (existem, desligados)
+  delivery/
+    whatsapp.ts     # envio via Evolution API v2
+    inbound.ts      # webhook de resposta, grava feedback
+  db/
+    supabase.ts
+    types.ts        # tipos das tabelas do schema radar
+  jobs/
+    collect.ts
+    process.ts
+    dispatch.ts
+  testing/          # só para dev e testes — fica fora do build
+    env.ts          # .env mínimo para os testes
+    rss-check.ts    # inspeciona um feed sem banco e sem gastar scorer
+  config.ts         # lê e valida o .env (zod), falha rápido no boot
+  logger.ts         # log estruturado em stdout
+  server.ts         # node:http — /health e /webhook/evolution
+  cli.ts            # roda um job avulso, fora do cron
+  index.ts          # boot: config → server → cron → shutdown gracioso
+migrations/
+  0001_schema_radar.sql
+  0002_seed_exemplo.sql
+```
+
+Todo collector implementa a mesma interface e devolve `RawItem[]` normalizado
+(`url`, `titulo`, `texto`, `autor`, `publicado_em`, `source_id`). Isso permite trocar o
+fornecedor de scraping de Instagram/TikTok sem tocar no resto do código: actors da Apify
+são mantidos por terceiros e quebram quando a plataforma muda o anti-bot. Trocar de
+fornecedor precisa custar um arquivo, não um refactor — por isso o nome do actor vem do
+`.env`, nunca hardcoded.
+
+## Setup local
+
+Requisitos: Node.js 22+ e um projeto Supabase.
+
+```bash
+npm install
+cp .env.example .env      # preencha os valores
+```
+
+Aplique as migrações no Supabase (SQL Editor, ou psql):
+
+```bash
+psql "$SUPABASE_DB_URL" -f migrations/0001_schema_radar.sql
+# edite os valores antes de rodar o seed
+psql "$SUPABASE_DB_URL" -f migrations/0002_seed_exemplo.sql
+```
+
+**Depois disso, vá em Settings → API → Exposed schemas e adicione `radar`.** Sem isso o
+PostgREST devolve 404 em toda query e o processo sobe sem conseguir ler nada.
+
+O `0002_seed_exemplo.sql` é um modelo: uma criadora e quatro fontes. O `perfil_texto` é
+o insumo principal do scorer — é ele que decide se um item vale 9 ou 3 para *esta*
+pessoa. Diga o que ela cobre, para quem ela fala, que formato de vídeo faz e,
+principalmente, o que ela **não** cobre.
+
+Antes de cadastrar um feed novo, dá para ver o que o coletor extrai dele sem tocar no
+banco nem gastar nada com o scorer:
+
+```bash
+npx tsx src/testing/rss-check.ts https://exemplo.com/feed
+```
+
+Rodar:
+
+```bash
+npm run dev            # processo completo com watch
+npm run typecheck
+npm test               # node:test, sem framework
+npm run build && npm start
+```
+
+Rodar um job avulso, sem esperar o cron (útil para depurar):
+
+```bash
+npm run job -- collect          # rss + social
+npm run job -- collect:rss
+npm run job -- collect:social
+npm run job -- process
+npm run job -- dispatch
+```
+
+## Variáveis de ambiente
+
+### Supabase
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `SUPABASE_URL` | — | URL do projeto |
+| `SUPABASE_SERVICE_ROLE_KEY` | — | Service role. O processo é backend e escreve em todas as tabelas |
+| `SUPABASE_SCHEMA` | `radar` | Schema usado pelo cliente |
+
+### Anthropic
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Chave da API |
+| `ANTHROPIC_MODEL` | `claude-opus-5` | Modelo do scorer |
+| `ANTHROPIC_EFFORT` | `medium` | `low` / `medium` / `high` / `xhigh` / `max` |
+
+### Evolution API
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `EVOLUTION_BASE_URL` | — | Ex.: `https://evo.seudominio.com` |
+| `EVOLUTION_INSTANCE` | — | Nome da instância conectada |
+| `EVOLUTION_API_KEY` | — | Vai no header `apikey` |
+| `EVOLUTION_WEBHOOK_TOKEN` | — | Segredo verificado no `POST /webhook/evolution` |
+
+### Apify (Instagram e TikTok)
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `APIFY_TOKEN` | — | Sem token, o coletor loga aviso e devolve vazio — não derruba o processo |
+| `APIFY_ACTOR_INSTAGRAM` | `apify/instagram-scraper` | ~US$ 1,50 / 1.000 posts, cobrança por resultado |
+| `APIFY_ACTOR_TIKTOK` | `scraptik/tiktok-api` | ~US$ 0,002 / requisição, independente do nº de resultados |
+| `SOCIAL_DRY_RUN` | `true` | Loga o que seria raspado, sem chamar a Apify nem gastar crédito |
+
+### Cadência
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `RSS_INTERVALO_MIN` | `5` | Coleta de RSS |
+| `SOCIAL_INTERVALO_MIN` | `60` | Coleta social. 1h é decisão de custo, não limitação técnica |
+| `SOCIAL_POSTS_POR_PERFIL` | `3` | Teto de posts puxados por perfil, por rodada |
+| `DISPATCH_INTERVALO_MIN` | `2` | Varredura de deliveries pendentes |
+
+### Controles de ruído — todos desligados na calibragem
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `FILTRO_SCORE_ATIVO` | `false` | Quando `true`, descarta item abaixo de `creators.corte_score` |
+| `TETO_DIARIO_ATIVO` | `false` | Quando `true`, respeita `creators.teto_dia` (0 = ilimitado) |
+| `JANELA_SILENCIO_ATIVA` | `false` | Quando `true`, segura envio dentro da janela da criadora |
+| `COOLDOWN_TEMA_ATIVO` | `false` | Quando `true`, evita repetir tema muito parecido |
+| `COOLDOWN_TEMA_HORAS` | `12` | Janela do cooldown de tema |
+
+### Runtime
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `PORT` | `3000` | Servidor HTTP (health + webhook) |
+| `TZ` | `America/Sao_Paulo` | Base do cron, da janela de silêncio e do teto diário |
+| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `BACKFILL_PRIMEIRA_COLETA` | `false` | Na 1ª coleta de uma fonte nova, marca o histórico como visto sem entregar |
+
+## Formato da mensagem
+
+```
+[8] Título da novidade
+Nome da Fonte · há 12 min
+
+Duas ou três linhas com os pontos mais interessantes do item,
+o suficiente pra decidir se vale gravar.
+
+Gancho: o ângulo de abertura sugerido, em uma frase.
+
+https://exemplo.com/materia
+
+Responde: 1 = gravaria · 2 = talvez · 3 = lixo
+```
+
+A resposta `1`, `2` ou `3` cai no webhook e vira `radar.deliveries.feedback`. O vínculo é
+feito pelo `message_id` que a Evolution devolve no envio e que guardamos junto do delivery.
+Quando a resposta não é citada (ela só digita `1`), o fallback atribui à última mensagem
+enviada para aquele número nas últimas 6 horas.
+
+Configure o webhook na Evolution apontando para:
+
+```
+POST https://seu-radar.easypanel.host/webhook/evolution/<EVOLUTION_WEBHOOK_TOKEN>
+```
+
+Basta o evento `messages.upsert`. O endpoint responde 200 mesmo quando ignora a mensagem
+— reenfileirar um webhook não conserta uma falha nossa, e o erro fica no log.
+
+## Deploy (Easypanel)
+
+Serviço único de processo contínuo em Docker. Nada de serverless: o Vercel Hobby foi
+descartado porque o cron é limitado a uma execução diária e o plano não permite uso comercial.
+
+- `Dockerfile` multi-stage: build do TypeScript, imagem final `node:22-alpine` só com
+  dependências de produção
+- Um único processo Node — `node-cron` cuida de collect/process/dispatch e o `node:http`
+  expõe o webhook da Evolution
+- Healthcheck do Easypanel em `GET /health` (200)
+- `docker-compose.yml` para rodar local
+- Encerramento gracioso em `SIGTERM`: para de aceitar novas rodadas, termina o job em
+  andamento e só então sai
+- Logs estruturados em stdout, um JSON por linha
+
+No Easypanel: criar um app a partir do repositório, apontar o healthcheck para `/health`,
+colar as variáveis de ambiente e expor a porta `3000` para o domínio que a Evolution vai
+chamar no webhook.
+
+## O que já existe
+
+- [x] `package.json` e toolchain (TS 7, `nodenext`, `node:test` — zero dependência de teste)
+- [x] Migração SQL do schema `radar` + seed de exemplo
+- [x] Estrutura completa de pastas, tipos e interfaces
+- [x] Coletor RSS de ponta a ponta (feed → corpo do artigo → dedupe → `items`)
+- [x] Scorer (structured output do SDK, parse defensivo, `falho` sem derrubar o job)
+- [x] Envio via Evolution API v2 + webhook de feedback
+- [x] Coletores de Instagram e TikTok atrás de `SocialProvider`, com dry-run
+- [x] Os 4 controles de ruído implementados e testados, desligados por `.env`
+- [x] Dockerfile, `docker-compose.yml`, `/health` e encerramento gracioso
+- [x] 75 testes cobrindo regras, dedupe, formatter, webhook, extração de HTML e cron
+
+### O que ainda não foi exercitado contra o serviço real
+
+O que depende de credencial que ainda não existe aqui foi escrito e tipado, mas nunca
+rodou contra o serviço de verdade:
+
+- a chamada ao Claude no `scorer` (sem `ANTHROPIC_API_KEY` nesta máquina)
+- o envio pela Evolution e o webhook de volta (sem instância conectada)
+- as queries no Supabase (sem projeto)
+- os actors da Apify (`SOCIAL_DRY_RUN=true` por padrão)
+
+O caminho para validar cada um, em ordem: aplique as migrações, exponha o schema,
+rode `npm run job -- collect:rss` e confira a tabela `items`; depois
+`npm run job -- process` e confira `deliveries`; depois `npm run job -- dispatch`.
+
+### Decisões que valem revisar depois da calibragem
+
+- **Modelo do scorer**: está em `claude-opus-5`, ~US$ 0,014 por item. A ~100 itens/dia
+  dá ~US$ 40/mês. Se o volume subir muito, `ANTHROPIC_MODEL=claude-sonnet-5` corta para
+  cerca de um terço — mas na calibragem a qualidade da nota é justamente o que se mede.
+- **`items.embedding`** existe na tabela e não é usada por nada. É o caminho para trocar
+  o cooldown de tema (hoje Jaccard sobre o título) por similaridade semântica.
+- **Fallback do feedback**: sem `stanzaId`, a resposta `1`/`2`/`3` é atribuída à última
+  mensagem enviada nas últimas 6 horas. Se ela responder fora de ordem, o feedback vai
+  para o item errado. Se isso acontecer na prática, o jeito é forçar resposta citada.

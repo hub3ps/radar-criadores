@@ -2,6 +2,8 @@ import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { log } from '../logger.js';
 import { variantesWhatsapp } from '../core/formatter.js';
+import { enviarTexto } from './whatsapp.js';
+import { iniciar, onboardingDe, responder } from './onboarding.js';
 import type { Delivery, Feedback } from '../db/types.js';
 
 const logger = log.com({ canal: 'inbound' });
@@ -15,7 +17,7 @@ const JANELA_FALLBACK_HORAS = 6;
 
 export interface ResultadoInbound {
   /** `ignorado` cobre tudo que não é 1/2/3: conversa normal, eco da própria mensagem, etc. */
-  status: 'gravado' | 'ignorado' | 'sem-vinculo';
+  status: 'gravado' | 'ignorado' | 'sem-vinculo' | 'cadastro';
   deliveryId?: string;
   motivo?: string;
 }
@@ -125,6 +127,17 @@ export function lerFeedback(texto: string): Feedback | null {
   return null;
 }
 
+/** Já é criadora cadastrada? Se for, mensagem solta não vira cadastro novo. */
+async function ehCriadora(numero: string): Promise<boolean> {
+  const { data, error } = await db.from('creators').select('whatsapp');
+  if (error) throw new Error(`busca de criadoras: ${error.message}`);
+
+  const doNumero = new Set(variantesWhatsapp(numero));
+  return ((data ?? []) as { whatsapp: string }[]).some((c) =>
+    variantesWhatsapp(c.whatsapp).some((v) => doNumero.has(v)),
+  );
+}
+
 /** Acha o delivery pelo id da mensagem respondida. */
 async function porMessageId(messageId: string): Promise<Delivery | null> {
   const { data, error } = await db
@@ -190,8 +203,24 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
   }
   if (mensagem.minha) return { status: 'ignorado', motivo: 'eco de mensagem própria' };
 
+  // Cadastro tem precedência sobre feedback: dentro da conversa de cadastro,
+  // um "1" é resposta a uma pergunta, não nota de um item.
+  const cadastro = await onboardingDe(mensagem.de);
+  if (cadastro && cadastro.etapa !== 'concluido') {
+    const resposta = await responder(cadastro, mensagem.texto);
+    if (resposta.texto) await enviarTexto(mensagem.de, resposta.texto);
+    return { status: 'cadastro', motivo: `etapa ${cadastro.etapa}` };
+  }
+
   const feedback = lerFeedback(mensagem.texto);
   if (feedback === null) {
+    // Número que nunca escreveu e não tem cadastro: é primeiro contato.
+    if (!cadastro && !(await ehCriadora(mensagem.de))) {
+      const inicio = await iniciar(mensagem.de);
+      if (inicio.texto) await enviarTexto(mensagem.de, inicio.texto);
+      return { status: 'cadastro', motivo: 'primeiro contato' };
+    }
+
     logger.debug('mensagem não é 1/2/3', { de: mensagem.de, texto: mensagem.texto.slice(0, 60) });
     return { status: 'ignorado', motivo: 'texto não é 1, 2 ou 3' };
   }

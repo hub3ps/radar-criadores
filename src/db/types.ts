@@ -83,3 +83,46 @@ export interface DeliveryParaEnvio {
   creator: Creator;
   nomeFonte: string;
 }
+
+// ---------------------------------------------------------------------------
+// Cadastro conversacional
+// ---------------------------------------------------------------------------
+
+export type EtapaOnboarding =
+  | 'nicho'
+  | 'perfil'
+  | 'sites'
+  | 'instagram'
+  | 'tiktok'
+  | 'confirmacao'
+  | 'concluido';
+
+/** Número autorizado a iniciar um cadastro. */
+export interface Convite {
+  whatsapp: string;
+  nome: string | null;
+  usado_em: string | null;
+  created_at: string;
+}
+
+export interface SiteEscolhido {
+  nome: string;
+  feed: string;
+  site: string;
+}
+
+/** Onde a conversa de cadastro parou. Vive no banco: o processo reinicia. */
+export interface Onboarding {
+  id: string;
+  whatsapp: string;
+  etapa: EtapaOnboarding;
+  nicho: string | null;
+  perfil_texto: string | null;
+  sites: SiteEscolhido[];
+  /** handles sem arroba */
+  instagram: string[];
+  tiktok: string[];
+  creator_id: string | null;
+  atualizado_em: string;
+  created_at: string;
+}

@@ -60,18 +60,21 @@ src/
     instagram.ts    # = criarColetorSocial('instagram', apifyProvider)
     tiktok.ts       # = criarColetorSocial('tiktok', apifyProvider)
     index.ts        # registro de coletores por tipo de fonte
+    descoberta.ts   # acha o RSS de um site a partir do domínio
     social/
       provider.ts   # interface SocialProvider
       apify.ts      # implementação Apify (REST), com dry-run
       base.ts       # coletor social genérico, compartilhado pelas duas redes
   core/
+    openrouter.ts   # chamada ao modelo com JSON validado
     dedupe.ts       # url canônica + url_hash
     scorer.ts       # 1 chamada por item via OpenRouter, JSON estrito
     formatter.ts    # monta a mensagem do WhatsApp
     regras.ts       # os 4 controles de ruído (existem, desligados)
   delivery/
     whatsapp.ts     # envio via Evolution API v2
-    inbound.ts      # webhook de resposta, grava feedback
+    inbound.ts      # webhook: roteia entre cadastro e feedback
+    onboarding.ts   # cadastro conversacional (roteiro fixo, estado no banco)
   db/
     supabase.ts
     types.ts        # tipos das tabelas do schema radar
@@ -90,7 +93,33 @@ src/
 migrations/
   0001_schema_radar.sql
   0002_seed_exemplo.sql
+  0003_feedback_idempotente.sql
+  0004_onboarding.sql
 ```
+
+## Cadastro pelo WhatsApp
+
+Uma criadora nova se cadastra conversando. O fluxo é um roteiro fixo de cinco
+perguntas — nicho, o que ela procura, sites, Instagram, TikTok — e o modelo entra
+só para interpretar a resposta livre dela (achar handles e domínios no meio do
+texto), nunca para conduzir a conversa. O estado mora em `radar.onboardings`,
+porque o processo reinicia a cada deploy e a conversa não pode recomeçar do zero.
+
+**Só quem está em `radar.convites` consegue se cadastrar.** Sem essa lista,
+qualquer número com o contato da instância viraria criadora ativa consumindo
+scorer. Para liberar alguém:
+
+```sql
+insert into radar.convites (whatsapp, nome) values ('5547999999999', 'Morgana');
+```
+
+Quando ela indica um site, o `descoberta.ts` procura o feed: testa se a própria
+URL já é RSS, lê o `<link rel="alternate">` da home, e tenta os caminhos
+convencionais. Se o site não publicar RSS — o AdoroCinema, por exemplo, não
+publica — o agente avisa e pede outro, em vez de cadastrar uma fonte morta.
+
+No `inbound`, **cadastro tem precedência sobre feedback**: dentro da conversa um
+`1` é resposta a uma pergunta, não nota de um item.
 
 Todo collector implementa a mesma interface e devolve `RawItem[]` normalizado
 (`url`, `titulo`, `texto`, `autor`, `publicado_em`, `source_id`). Isso permite trocar o

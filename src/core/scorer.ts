@@ -1,19 +1,11 @@
 import { z } from 'zod';
-import { config } from '../config.js';
-import { log } from '../logger.js';
+import { ErroModelo, extrairJson, interpretar, pedirJson } from './openrouter.js';
 import type { Creator, Item } from '../db/types.js';
 
 /**
- * Uma chamada ao modelo por item, via OpenRouter (API compatível com a da OpenAI).
- *
- * Pedimos `response_format: json_schema` com `strict`, que é o caminho em que o
- * provedor garante o formato. Mas o parse defensivo continua valendo de verdade:
- * nem todo endpoint honra structured output, e um dia de roteamento ruim devolve
- * texto solto. Se vier fora do formato, o `process` marca o delivery como falho
- * e a rodada segue.
+ * Uma chamada ao modelo por item. O contrato de saída e o parse defensivo
+ * moram em `openrouter.ts`; aqui fica só o que é do scoring.
  */
-const logger = log.com({ componente: 'scorer' });
-
 const RespostaScorer = z.object({
   score: z.number().describe('0 a 10: o quanto este item merece virar vídeo para ESTA criadora'),
   motivo: z.string().describe('Uma linha explicando a nota'),
@@ -23,35 +15,11 @@ const RespostaScorer = z.object({
 
 export type RespostaScorer = z.infer<typeof RespostaScorer>;
 
-/** `$schema` no topo faz alguns validadores de strict mode recusarem o payload. */
-function schemaDoModelo(): Record<string, unknown> {
-  const { $schema: _ignorado, ...schema } = z.toJSONSchema(RespostaScorer) as Record<string, unknown>;
-  return schema;
-}
-
-const JSON_SCHEMA = schemaDoModelo();
-
-/** Falha de scoring. O job registra e marca o delivery como falho — não derruba a rodada. */
-export class ErroScorer extends Error {
-  constructor(
-    message: string,
-    readonly causa?: unknown,
-  ) {
-    super(message);
-    this.name = 'ErroScorer';
-  }
-}
+/** Mantido para quem já trata este nome; é o erro do cliente do modelo. */
+export { ErroModelo as ErroScorer, extrairJson };
 
 /** Corta o texto do item para não estourar contexto com uma matéria gigante. */
 const LIMITE_TEXTO = 12_000;
-const TIMEOUT_MS = 90_000;
-
-/**
- * A resposta em si tem ~300 tokens. A folga existe porque token de raciocínio
- * conta como saída e entra nesta conta — com o teto antigo de 2000, um item mais
- * denso truncava antes de sobrar espaço para o JSON. Só se paga o que for gerado.
- */
-const MAX_TOKENS = 8000;
 
 const INSTRUCOES = `Você avalia novidades para uma criadora de conteúdo brasileira.
 
@@ -98,53 +66,11 @@ function montarConteudoItem(
 }
 
 /**
- * Isola o objeto JSON de uma resposta que pode vir suja: cercada por ```json,
- * com texto antes ou depois. Devolve null se não houver objeto reconhecível.
+ * A nota é o eixo de toda a calibragem: um valor fora da faixa, ou com espaço
+ * sobrando nos textos, estragaria o resto do sistema silenciosamente.
  */
-export function extrairJson(bruto: string): unknown {
-  const texto = bruto.trim();
-  if (texto === '') return null;
-
-  const semCerca = texto
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '')
-    .trim();
-
-  const candidatos = [semCerca];
-
-  const inicio = semCerca.indexOf('{');
-  const fim = semCerca.lastIndexOf('}');
-  if (inicio !== -1 && fim > inicio) candidatos.push(semCerca.slice(inicio, fim + 1));
-
-  for (const candidato of candidatos) {
-    try {
-      return JSON.parse(candidato);
-    } catch {
-      /* tenta o próximo */
-    }
-  }
-
-  return null;
-}
-
-/** Valida e normaliza a resposta do modelo. Lança `ErroScorer` se não der. */
-export function interpretarResposta(bruto: string): RespostaScorer {
-  const json = extrairJson(bruto);
-  if (json === null) {
-    throw new ErroScorer(`resposta não continha JSON: ${bruto.slice(0, 200)}`);
-  }
-
-  const validado = RespostaScorer.safeParse(json);
-  if (!validado.success) {
-    const problemas = validado.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    throw new ErroScorer(`resposta fora do formato esperado (${problemas})`);
-  }
-
-  const saida = validado.data;
-
+function normalizar(saida: RespostaScorer): RespostaScorer {
   return {
-    // A nota é o eixo de toda a calibragem: um valor fora da faixa estragaria
-    // o resto do sistema silenciosamente.
     score: Math.min(10, Math.max(0, Math.round(saida.score))),
     motivo: saida.motivo.trim(),
     resumo: saida.resumo.trim(),
@@ -152,62 +78,9 @@ export function interpretarResposta(bruto: string): RespostaScorer {
   };
 }
 
-interface RespostaOpenRouter {
-  choices?: { message?: { content?: string | null }; finish_reason?: string }[];
-  error?: { message?: string; code?: number };
-}
-
-function montarCorpo(perfil: string, conteudoItem: string, comSchema: boolean): Record<string, unknown> {
-  const corpo: Record<string, unknown> = {
-    model: config.openrouter.modelo,
-    max_tokens: MAX_TOKENS,
-    messages: [
-      { role: 'system', content: `${INSTRUCOES}\n\n---\n\n${perfil}` },
-      { role: 'user', content: conteudoItem },
-    ],
-  };
-
-  if (comSchema) {
-    corpo.response_format = {
-      type: 'json_schema',
-      json_schema: { name: 'avaliacao_item', strict: true, schema: JSON_SCHEMA },
-    };
-    // Só roteia para endpoints que realmente suportam o parâmetro.
-    corpo.provider = { require_parameters: true };
-  }
-
-  // Mandar `effort: 'none'` explicitamente é o que DESLIGA o raciocínio.
-  // Omitir o parâmetro não desliga: o Opus 5 pensa por padrão, e esses tokens
-  // contam como saída — foi o que truncou a resposta em produção.
-  corpo.reasoning = { effort: config.openrouter.reasoningEffort };
-
-  return corpo;
-}
-
-async function chamar(corpo: Record<string, unknown>): Promise<RespostaOpenRouter> {
-  const resposta = await fetch(`${config.openrouter.baseUrl}/chat/completions`, {
-    method: 'POST',
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${config.openrouter.apiKey}`,
-      // Atribuição — aparece no painel do OpenRouter e ajuda a separar o gasto.
-      'X-Title': 'radar-criadores',
-    },
-    body: JSON.stringify(corpo),
-  });
-
-  const bruto = await resposta.text();
-
-  if (!resposta.ok) {
-    throw new ErroScorer(`OpenRouter devolveu ${resposta.status}: ${bruto.slice(0, 400)}`);
-  }
-
-  try {
-    return JSON.parse(bruto) as RespostaOpenRouter;
-  } catch {
-    throw new ErroScorer(`resposta do OpenRouter não era JSON: ${bruto.slice(0, 200)}`);
-  }
+/** Valida e normaliza a resposta crua do modelo. Exposto para teste. */
+export function interpretarResposta(bruto: string): RespostaScorer {
+  return normalizar(interpretar(bruto, RespostaScorer));
 }
 
 export interface EntradaScorer {
@@ -229,44 +102,14 @@ export async function pontuar(entrada: EntradaScorer): Promise<RespostaScorer> {
     .filter((linha) => linha !== null)
     .join('\n');
 
-  const conteudoItem = montarConteudoItem(item, nomeFonte);
+  const saida = await pedirJson(
+    {
+      system: `${INSTRUCOES}\n\n---\n\n${perfil}`,
+      user: montarConteudoItem(item, nomeFonte),
+      nome: 'avaliacao_item',
+    },
+    RespostaScorer,
+  );
 
-  let dados: RespostaOpenRouter;
-  try {
-    dados = await chamar(montarCorpo(perfil, conteudoItem, true));
-  } catch (erro) {
-    // Endpoint sem suporte a structured output: tenta de novo sem o schema.
-    // As instruções já pedem JSON puro, e o parse defensivo cobre o resto.
-    const mensagem = erro instanceof Error ? erro.message : String(erro);
-    const semSuporte = /response_format|json_schema|structured|require_parameters|no endpoints/i.test(mensagem);
-
-    if (!semSuporte) {
-      throw erro instanceof ErroScorer ? erro : new ErroScorer(mensagem, erro);
-    }
-
-    logger.warn('endpoint sem structured output — repetindo sem schema', {
-      modelo: config.openrouter.modelo,
-      detalhe: mensagem.slice(0, 200),
-    });
-
-    dados = await chamar(montarCorpo(perfil, conteudoItem, false));
-  }
-
-  if (dados.error) {
-    throw new ErroScorer(`OpenRouter: ${dados.error.message ?? 'erro sem mensagem'}`);
-  }
-
-  const escolha = dados.choices?.[0];
-  if (!escolha) throw new ErroScorer('OpenRouter não devolveu nenhuma escolha');
-
-  if (escolha.finish_reason === 'length') {
-    throw new ErroScorer('resposta truncada em max_tokens');
-  }
-
-  const conteudo = escolha.message?.content;
-  if (typeof conteudo !== 'string' || conteudo.trim() === '') {
-    throw new ErroScorer(`conteúdo vazio (finish_reason: ${escolha.finish_reason ?? 'desconhecido'})`);
-  }
-
-  return interpretarResposta(conteudo);
+  return normalizar(saida);
 }

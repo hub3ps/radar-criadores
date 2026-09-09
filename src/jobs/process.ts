@@ -41,14 +41,20 @@ async function fontesDaCriadora(creatorId: string): Promise<Map<string, string>>
 /**
  * Itens das fontes da criadora que ainda não viraram delivery para ela.
  *
- * Filtra por `entregavel` (exclui o backfill da primeira coleta) e por validade:
- * novidade de três dias atrás não é novidade, e pagar o scorer por ela é desperdício.
+ * Três filtros:
+ * - `entregavel`, que exclui o backfill da primeira coleta de uma fonte
+ * - validade: novidade de três dias atrás não é novidade, e pagar o scorer
+ *   por ela é desperdício
+ * - a data de cadastro dela. A proteção de backfill é por FONTE, não por
+ *   criadora: sem este corte, quem se cadastra numa fonte que já está sendo
+ *   coletada recebe o backlog inteiro de 48h no primeiro minuto.
  */
-async function itensPendentes(creatorId: string, sourceIds: string[], limite: number): Promise<Item[]> {
+async function itensPendentes(creator: Creator, sourceIds: string[], limite: number): Promise<Item[]> {
   if (sourceIds.length === 0) return [];
 
+  const porValidade = Date.now() - config.runtime.itemValidadeHoras * 3_600_000;
   const desde = new Date(
-    Date.now() - config.runtime.itemValidadeHoras * 3_600_000,
+    Math.max(porValidade, new Date(creator.created_at).getTime()),
   ).toISOString();
 
   const { data: itens, error } = await db
@@ -69,7 +75,7 @@ async function itensPendentes(creatorId: string, sourceIds: string[], limite: nu
   const { data: existentes, error: erroDeliveries } = await db
     .from('deliveries')
     .select('item_id')
-    .eq('creator_id', creatorId)
+    .eq('creator_id', creator.id)
     .in('item_id', candidatos.map((i) => i.id));
 
   if (erroDeliveries) throw new Error(`busca de deliveries: ${erroDeliveries.message}`);
@@ -99,7 +105,7 @@ export async function process(): Promise<ResumoProcess> {
   for (const creator of criadoras) {
     const nomesDeFonte = await fontesDaCriadora(creator.id);
     const itens = await itensPendentes(
-      creator.id,
+      creator,
       [...nomesDeFonte.keys()],
       config.runtime.processLoteMax,
     );

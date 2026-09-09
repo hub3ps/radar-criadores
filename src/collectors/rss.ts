@@ -11,8 +11,12 @@ const parser = new Parser({
   headers: { 'user-agent': 'radar-criadores/0.1 (+monitor de novidades)' },
 });
 
-/** Feeds costumam entregar menos que isso; a partir daí não vale gastar fetch. */
-const TAMANHO_MINIMO_CORPO = 400;
+/**
+ * Abaixo disso vale buscar o corpo na página.
+ * Calibrado em feeds reais: o CinePOP entrega resumos de ~430 chars, o suficiente
+ * para passar de um limiar baixo e deixar o scorer com quase nada para trabalhar.
+ */
+const TAMANHO_MINIMO_CORPO = 800;
 const TIMEOUT_CORPO_MS = 8_000;
 
 /** Tags cujo conteúdo nunca é o texto da matéria. */
@@ -27,7 +31,7 @@ const BLOCOS_RUIDO =
 export function extrairTexto(html: string): string {
   const corpo = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html;
 
-  return corpo
+  const linhas = corpo
     .replace(BLOCOS_RUIDO, ' ')
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<(p|div|br|li|h[1-6]|tr)\b[^>]*>/gi, '\n')
@@ -44,9 +48,30 @@ export function extrairTexto(html: string): string {
     .replace(/\n\s*\n\s*\n+/g, '\n\n')
     .split('\n')
     .map((linha) => linha.trim())
-    .filter((linha) => linha.length > 0)
-    .join('\n')
-    .trim();
+    .filter((linha) => linha.length > 0);
+
+  const prosa = linhas.filter(ehProsa).join('\n').trim();
+
+  // Se o filtro não deixou nem um parágrafo de pé, o texto provavelmente é curto
+  // de verdade (nota rápida, matéria de duas frases) e não uma página cheia de
+  // menu. Aí vale mais o texto inteiro com entulho do que quase nada.
+  return prosa.length >= 120 ? prosa : linhas.join('\n').trim();
+}
+
+/**
+ * Separa parágrafo de entulho de navegação.
+ *
+ * Menu, byline e rodapé são fragmentos curtos sem pontuação final; parágrafo de
+ * matéria é longo ou termina em ponto. Sem isso o scorer recebe o menu inteiro
+ * do site antes do texto — e no Deadline chegava a começar com o título de outra
+ * matéria, o que faz avaliar a notícia errada.
+ */
+function ehProsa(linha: string): boolean {
+  if (linha.length >= 120) return true;
+  // Pontuação final já é sinal forte: item de menu quase nunca termina em ponto.
+  // O piso de tamanho só descarta migalha do tipo "Leia mais.".
+  if (/[.!?…"'\u201d\u2019)]$/.test(linha) && linha.length >= 25) return true;
+  return false;
 }
 
 /**

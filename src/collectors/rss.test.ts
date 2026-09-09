@@ -52,3 +52,32 @@ describe('extrairTexto', () => {
     assert.equal(extrairTexto(''), '');
   });
 });
+
+describe('extrairTexto — limpeza de boilerplate', () => {
+  const menu = ['Home','Notícias','Críticas','Em Breve nos Cinemas','Prime Video','Séries'];
+  const paragrafo =
+    'A Paramount confirmou nesta quarta-feira que o ator vai integrar o elenco da terceira temporada, ' +
+    'que começa a ser gravada em janeiro na Cidade do México com boa parte do time original.';
+
+  test('descarta menu de navegação e mantém o parágrafo', () => {
+    const html = `<body>${menu.map((m) => `<li>${m}</li>`).join('')}<p>${paragrafo}</p></body>`;
+    const saida = extrairTexto(html);
+    assert.equal(saida, paragrafo);
+    for (const item of menu) assert.ok(!saida.includes(item), `deveria ter descartado "${item}"`);
+  });
+
+  test('mantém frase curta que termina em ponto quando tem corpo suficiente', () => {
+    const html = `<body><p>${paragrafo}</p><p>Ela não quis comentar o assunto.</p></body>`;
+    assert.match(extrairTexto(html), /Ela não quis comentar o assunto\.$/);
+  });
+
+  test('texto genuinamente curto sobrevive inteiro em vez de virar nada', () => {
+    // Sem a rede de segurança, o filtro comeria as duas linhas e devolveria ''.
+    assert.equal(extrairTexto('<p>Primeiro parágrafo.</p><p>Segundo.</p>'), 'Primeiro parágrafo.\nSegundo.');
+  });
+
+  test('página só de menu não vira string vazia', () => {
+    const saida = extrairTexto(`<body>${menu.map((m) => `<li>${m}</li>`).join('')}</body>`);
+    assert.ok(saida.length > 0);
+  });
+});

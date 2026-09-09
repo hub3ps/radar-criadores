@@ -4,7 +4,6 @@
  *
  *   npx tsx src/testing/rss-check.ts https://exemplo.com/feed
  */
-import './env.js';
 import { rssCollector } from '../collectors/rss.js';
 import { dedupePorHash } from '../core/dedupe.js';
 import type { Source } from '../db/types.js';

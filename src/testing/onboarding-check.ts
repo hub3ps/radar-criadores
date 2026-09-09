@@ -1,5 +1,6 @@
-/** Percorre o cadastro inteiro com um número fictício. Não envia WhatsApp. */
+/** Percorre o cadastro com 5 sites, incluindo um sem RSS. Não envia WhatsApp. */
 import { db } from '../db/supabase.js';
+import { config } from '../config.js';
 import { iniciar, onboardingDe, responder } from '../delivery/onboarding.js';
 
 const NUM = '5511900000001';
@@ -10,50 +11,45 @@ async function limpar() {
   await db.from('onboardings').delete().eq('whatsapp', NUM);
   await db.from('convites').delete().eq('whatsapp', NUM);
 }
-
-function bot(t: string | null) {
-  if (!t) return console.log('  [bot não respondeu]\n');
-  console.log(t.split('\n').map((l) => '  │ ' + l).join('\n') + '\n');
-}
-function ela(t: string) { console.log(`  ELA ▶ ${t}\n`); }
+const bot = (t: string | null) => console.log(t ? t.split('\n').map((l) => '  │ ' + l).join('\n') + '\n' : '  [sem resposta]\n');
+const ela = (t: string) => console.log(`  ELA ▶ ${t}\n`);
 
 await limpar();
-
-console.log('=== 1) número NÃO convidado ===');
+console.log('limite configurado:', config.runtime.cadastroMaxFontes, '\n');
+await db.from('convites').insert({ whatsapp: NUM, nome: 'Teste' });
 bot((await iniciar(NUM)).texto);
 
-console.log('=== 2) com convite ===');
-await db.from('convites').insert({ whatsapp: NUM, nome: 'Morgana (teste)' });
-await db.from('onboardings').delete().eq('whatsapp', NUM);
-bot((await iniciar(NUM)).texto);
-
-const passos = [
-  'cinema e séries',
-  'Faço vídeos curtos sobre lançamentos de filme e série. Gosto de anúncio de elenco, trailer novo, data de estreia e bilheteria. Não gosto de crítica longa nem de fofoca de famoso.',
-  'quero o deadline.com e também o adorocinema',
-  '@variety e @netflixbrasil',
-  'pular',
+const passos: [string, string][] = [
+  ['m1', 'cinema e séries'],
+  ['m2', 'Lançamentos, elenco, trailer e data de estreia. Não quero crítica longa.'],
+  ['m3', 'deadline.com, variety.com, cinepop.com.br, g1.globo.com e adorocinema.com'],
+  ['m4', 'pular'],
+  ['m5', 'pular'],
 ];
 
-for (const texto of passos) {
+for (const [id, texto] of passos) {
   const o = await onboardingDe(NUM);
   if (!o) break;
   ela(texto);
-  bot((await responder(o, texto)).texto);
+  const t = Date.now();
+  bot((await responder(o, texto, id)).texto);
+  if (id === 'm3') console.log(`  (etapa de sites levou ${((Date.now() - t) / 1000).toFixed(1)}s)\n`);
 }
 
-console.log('=== confirmando ===');
-const o = await onboardingDe(NUM);
-if (o) { ela('sim'); bot((await responder(o, 'sim')).texto); }
+console.log('=== reenvio do MESMO webhook da etapa de sites (idempotência) ===');
+const antes = await onboardingDe(NUM);
+const r = await responder(antes!, 'qualquer coisa', 'm5');
+console.log('  resposta:', r.texto === null ? 'ignorado (correto)' : 'AVANÇOU — BUG');
+console.log('  etapa segue:', (await onboardingDe(NUM))?.etapa, '\n');
 
-const final = await onboardingDe(NUM);
-console.log('=== resultado no banco ===');
-console.log('  etapa:', final?.etapa, '| creator_id:', final?.creator_id ? 'criado' : 'AUSENTE');
-if (final?.creator_id) {
-  const { data } = await db.from('creator_sources').select('sources(tipo, nome, identificador)').eq('creator_id', final.creator_id);
-  for (const l of (data ?? []) as { sources: { tipo: string; nome: string; identificador: string } }[]) {
-    console.log(`  fonte: ${l.sources.tipo.padEnd(10)} ${l.sources.nome} -> ${l.sources.identificador}`);
-  }
+const o = await onboardingDe(NUM);
+if (o) { ela('sim'); bot((await responder(o, 'sim', 'm6')).texto); }
+
+const f = await onboardingDe(NUM);
+if (f?.creator_id) {
+  const { data } = await db.from('creator_sources').select('sources(tipo, nome)').eq('creator_id', f.creator_id);
+  console.log('fontes vinculadas:');
+  for (const l of (data ?? []) as { sources: { tipo: string; nome: string } }[]) console.log(`  ${l.sources.tipo.padEnd(10)} ${l.sources.nome}`);
 }
 await limpar();
-console.log('\n  (dados de teste removidos)');
+console.log('\n(dados de teste removidos)');

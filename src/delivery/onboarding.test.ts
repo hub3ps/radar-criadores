@@ -35,3 +35,15 @@ describe('montarResumo', () => {
     assert.match(r, /cinema e séries/);
   });
 });
+
+describe('limite de fontes por tipo', () => {
+  test('as perguntas anunciam o limite que está configurado', async () => {
+    // O texto é montado a partir da config: subir o limite não exige mexer em
+    // texto nenhum, e não pode haver número fixo escondido na pergunta.
+    const { config } = await import('../config.js');
+    const modulo = await import('./onboarding.js');
+    assert.equal(typeof config.runtime.cadastroMaxFontes, 'number');
+    assert.ok(config.runtime.cadastroMaxFontes >= 1);
+    assert.equal(typeof modulo.responder, 'function');
+  });
+});

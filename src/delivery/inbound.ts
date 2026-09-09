@@ -207,7 +207,7 @@ export async function processarInbound(payload: unknown): Promise<ResultadoInbou
   // um "1" é resposta a uma pergunta, não nota de um item.
   const cadastro = await onboardingDe(mensagem.de);
   if (cadastro && cadastro.etapa !== 'concluido') {
-    const resposta = await responder(cadastro, mensagem.texto);
+    const resposta = await responder(cadastro, mensagem.texto, mensagem.id);
     if (resposta.texto) await enviarTexto(mensagem.de, resposta.texto);
     return { status: 'cadastro', motivo: `etapa ${cadastro.etapa}` };
   }

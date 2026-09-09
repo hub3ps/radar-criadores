@@ -75,6 +75,8 @@ const Env = z.object({
   ITEM_IDADE_MAX_HORAS: inteiro(24),
   // Buscar o corpo do artigo na URL quando o feed só entrega um resumo curto.
   RSS_BUSCAR_CORPO: booleano(true),
+  // Quantos sites / perfis de cada rede o cadastro aceita por criadora.
+  CADASTRO_MAX_FONTES: inteiro(2),
 });
 
 function carregar() {
@@ -138,6 +140,7 @@ function carregar() {
       itemValidadeHoras: e.ITEM_VALIDADE_HORAS,
       itemIdadeMaxHoras: e.ITEM_IDADE_MAX_HORAS,
       rssBuscarCorpo: e.RSS_BUSCAR_CORPO,
+      cadastroMaxFontes: e.CADASTRO_MAX_FONTES,
     },
   });
 }

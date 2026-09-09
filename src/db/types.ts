@@ -123,6 +123,8 @@ export interface Onboarding {
   instagram: string[];
   tiktok: string[];
   creator_id: string | null;
+  /** id da última mensagem processada. Chave de idempotência. */
+  ultima_mensagem_id: string | null;
   atualizado_em: string;
   created_at: string;
 }

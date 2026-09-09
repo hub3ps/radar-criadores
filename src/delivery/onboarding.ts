@@ -18,7 +18,8 @@ import type { Onboarding, EtapaOnboarding } from '../db/types.js';
  */
 const logger = log.com({ componente: 'onboarding' });
 
-const MAX_POR_TIPO = 2;
+/** Vem do `.env` (`CADASTRO_MAX_FONTES`): na fase de testes vale abrir mais. */
+const MAX_POR_TIPO = config.runtime.cadastroMaxFontes;
 
 // ---------------------------------------------------------------------------
 // Textos
@@ -263,18 +264,31 @@ export async function iniciar(numero: string): Promise<RespostaOnboarding> {
 }
 
 /** Processa uma resposta dela dentro do cadastro em andamento. */
-export async function responder(o: Onboarding, texto: string): Promise<RespostaOnboarding> {
+export async function responder(
+  o: Onboarding,
+  texto: string,
+  mensagemId: string | null = null,
+): Promise<RespostaOnboarding> {
   const limpo = texto.trim();
   if (limpo === '') return { texto: null };
 
+  // Reenvio do mesmo webhook não pode avançar a etapa de novo.
+  if (mensagemId !== null && o.ultima_mensagem_id === mensagemId) {
+    logger.debug('webhook de cadastro duplicado ignorado', { mensagemId, etapa: o.etapa });
+    return { texto: null };
+  }
+
+  const avancar = (campos: Record<string, unknown>) =>
+    salvar(o.id, { ...campos, ultima_mensagem_id: mensagemId });
+
   switch (o.etapa) {
     case 'nicho': {
-      await salvar(o.id, { nicho: limpo.slice(0, 120), etapa: 'perfil' });
+      await avancar({ nicho: limpo.slice(0, 120), etapa: 'perfil' });
       return { texto: PERGUNTAS.perfil };
     }
 
     case 'perfil': {
-      await salvar(o.id, { perfil_texto: limpo.slice(0, 4000), etapa: 'sites' });
+      await avancar({ perfil_texto: limpo.slice(0, 4000), etapa: 'sites' });
       return { texto: PERGUNTAS.sites };
     }
 
@@ -282,20 +296,23 @@ export async function responder(o: Onboarding, texto: string): Promise<RespostaO
       const { itens, pular } = await extrairFontes(limpo, 'site');
 
       if (pular || itens.length === 0) {
-        await salvar(o.id, { etapa: 'instagram' });
+        await avancar({ etapa: 'instagram' });
         return { texto: `Sem sites então.\n\n${PERGUNTAS.instagram}` };
       }
 
-      const achados = [];
-      const faltaram = [];
-      for (const item of itens) {
-        const feed = await descobrirFeed(item);
-        if (feed) achados.push(feed);
-        else faltaram.push(item);
-      }
+      // Em paralelo de propósito: sequencial, cinco sites levariam mais de
+      // trinta segundos no pior caso, a Evolution daria timeout e reenviaria o
+      // webhook. Assim o tempo é o do site mais lento, não a soma.
+      const resultados = await Promise.all(
+        itens.map(async (item) => ({ item, feed: await descobrirFeed(item) })),
+      );
+      const achados = resultados.flatMap((r) => (r.feed ? [r.feed] : []));
+      const faltaram = resultados.filter((r) => !r.feed).map((r) => r.item);
 
       if (achados.length === 0) {
-        // Nenhum funcionou: fica na mesma etapa e pede outro.
+        // Fica na mesma etapa e pede outro, mas registra a mensagem: um reenvio
+        // não deve pagar a descoberta de novo.
+        await avancar({ etapa: 'sites' });
         return {
           texto:
             `Não achei feed de notícias em ${faltaram.join(' nem ')}. 😕\n\n` +
@@ -304,7 +321,7 @@ export async function responder(o: Onboarding, texto: string): Promise<RespostaO
         };
       }
 
-      await salvar(o.id, { sites: achados, etapa: 'instagram' });
+      await avancar({ sites: achados, etapa: 'instagram' });
 
       const aviso =
         faltaram.length > 0
@@ -318,13 +335,13 @@ export async function responder(o: Onboarding, texto: string): Promise<RespostaO
 
     case 'instagram': {
       const { itens, pular } = await extrairFontes(limpo, 'instagram');
-      await salvar(o.id, { instagram: pular ? [] : itens, etapa: 'tiktok' });
+      await avancar({ instagram: pular ? [] : itens, etapa: 'tiktok' });
       return { texto: PERGUNTAS.tiktok };
     }
 
     case 'tiktok': {
       const { itens, pular } = await extrairFontes(limpo, 'tiktok');
-      await salvar(o.id, { tiktok: pular ? [] : itens, etapa: 'confirmacao' });
+      await avancar({ tiktok: pular ? [] : itens, etapa: 'confirmacao' });
 
       const atual = await onboardingDe(o.whatsapp);
       return { texto: montarResumo(atual ?? { ...o, tiktok: pular ? [] : itens }) };
@@ -337,7 +354,7 @@ export async function responder(o: Onboarding, texto: string): Promise<RespostaO
       }
 
       if (/^(n[ãa]o|n|refazer|errado|corrigir)\b/i.test(limpo)) {
-        await salvar(o.id, {
+        await avancar({
           etapa: 'nicho',
           nicho: null,
           perfil_texto: null,

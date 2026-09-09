@@ -113,6 +113,9 @@ scorer. Para liberar alguém:
 insert into radar.convites (whatsapp, nome) values ('5547999999999', 'Morgana');
 ```
 
+O teto de fontes por tipo é `CADASTRO_MAX_FONTES` — as perguntas se ajustam ao
+valor, então subir o limite não exige mexer em texto nenhum.
+
 Quando ela indica um site, o `descoberta.ts` procura o feed: testa se a própria
 URL já é RSS, lê o `<link rel="alternate">` da home, e tenta os caminhos
 convencionais. Se o site não publicar RSS — o AdoroCinema, por exemplo, não

@@ -313,6 +313,54 @@ No Easypanel: criar um app a partir do repositório, apontar o healthcheck para 
 colar as variáveis de ambiente e expor a porta `3000` para o domínio que a Evolution vai
 chamar no webhook.
 
+## Próximos passos
+
+### Catálogo de fontes por nicho — adiado
+
+Hoje o cadastro pergunta à criadora quais sites ela quer acompanhar. A pergunta é
+mal endereçada: ela sabe o que quer, mas não tem como saber quais sites publicam
+RSS. Foi o que aconteceu no primeiro teste — indicou o AdoroCinema, que não tem
+feed, e do ponto de vista dela o produto falhou numa responsabilidade nossa.
+
+A ideia é um catálogo curado que o agente oferece a partir do que ela descreveu.
+
+**Adiado até depois do primeiro cadastro real.** O catálogo é curado uma vez e
+serve todas as criadoras daquele nicho — com uma única criadora, o custo de
+curadoria não se paga. E o teste vai mostrar se a pergunta de sites é mesmo
+atrito na prática.
+
+Quando for construir, **não** usar tabela `nicho → fonte`. `creators.nicho` é
+texto livre ("Inteligência artificial", "IA", "tech") e casamento literal quase
+nunca acerta; manter sinônimos vira trabalho permanente. E a relação é nebulosa:
+o Deadline serve cinema, séries, streaming e parcialmente negócios de mídia.
+
+A forma que vale a pena:
+
+```
+fontes_catalogo
+  feed, nome, site, idioma
+  cobre          -- descrição em texto do que a fonte publica
+  volume_dia     -- itens/dia, medido e não estimado
+  verificado_em
+```
+
+- o casamento acontece contra o **`perfil_texto`**, não contra o nicho. O perfil
+  já é coletado antes da pergunta de sites e é o insumo mais rico que existe —
+  é o mesmo que faz o scorer acertar
+- na etapa de sites o modelo escolhe 3-5 candidatas e o agente as oferece
+  numeradas; ela responde os números e ainda pode acrescentar sites próprios,
+  então o fluxo atual continua valendo como caminho alternativo
+- quais fontes entram é julgamento editorial de quem opera; verificar o feed e
+  medir o volume é automático
+- feed morre: prever um job que revalide o catálogo e marque as quebradas
+
+### Outras pendências
+
+- Substituir o `perfil_texto` rascunhado pelo Claude por um escrito pela criadora
+- Rotacionar a `AUTHENTICATION_API_KEY` da Evolution e a senha do Postgres em
+  `DATABASE_CONNECTION_URI`
+- Com ~40 respostas de feedback, cruzar score contra feedback para achar o corte
+
 ## O que já existe
 
 - [x] `package.json` e toolchain (TS 7, `nodenext`, `node:test` — zero dependência de teste)

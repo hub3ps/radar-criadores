@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatarMensagem, normalizarWhatsapp, tempoRelativo } from './formatter.js';
+import { formatarMensagem, normalizarWhatsapp, tempoRelativo, variantesWhatsapp } from './formatter.js';
 
 const AGORA = new Date('2026-03-10T15:00:00Z');
 const atras = (ms: number) => new Date(AGORA.getTime() - ms);
@@ -81,5 +81,34 @@ describe('formatarMensagem', () => {
 describe('normalizarWhatsapp', () => {
   test('deixa só dígitos', () => {
     assert.equal(normalizarWhatsapp('+55 (11) 99999-8888'), '5511999998888');
+  });
+});
+
+describe('variantesWhatsapp', () => {
+  test('celular com nono dígito também casa sem ele', () => {
+    const v = variantesWhatsapp('5547996489767');
+    assert.ok(v.includes('5547996489767'));
+    assert.ok(v.includes('554796489767'));
+  });
+
+  test('celular sem nono dígito também casa com ele', () => {
+    const v = variantesWhatsapp('554796489767');
+    assert.ok(v.includes('554796489767'));
+    assert.ok(v.includes('5547996489767'));
+  });
+
+  test('os dois formatos geram o mesmo conjunto — é o que faz o match funcionar', () => {
+    assert.deepEqual(
+      [...variantesWhatsapp('5547996489767')].sort(),
+      [...variantesWhatsapp('554796489767')].sort(),
+    );
+  });
+
+  test('aceita número formatado', () => {
+    assert.ok(variantesWhatsapp('+55 (47) 99648-9767').includes('5547996489767'));
+  });
+
+  test('número estrangeiro passa intacto, sem inventar variante', () => {
+    assert.deepEqual(variantesWhatsapp('12025550123'), ['12025550123']);
   });
 });

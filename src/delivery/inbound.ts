@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { log } from '../logger.js';
-import { normalizarWhatsapp } from '../core/formatter.js';
+import { variantesWhatsapp } from '../core/formatter.js';
 import type { Delivery, Feedback } from '../db/types.js';
 
 const logger = log.com({ canal: 'inbound' });
@@ -54,8 +54,13 @@ export function extrairMensagem(payload: unknown): MensagemRecebida | null {
   const corpo = comoRegistro(payload);
   if (!corpo) return null;
 
+  // A Evolution manda `MESSAGES_UPSERT` em algumas versões e `messages.upsert`
+  // em outras. Comparar a forma crua descartava o payload em silêncio.
   const evento = comoTexto(corpo.event);
-  if (evento !== null && !evento.startsWith('messages.upsert')) return null;
+  if (evento !== null) {
+    const normalizado = evento.toLowerCase().replace(/_/g, '.');
+    if (!normalizado.startsWith('messages.upsert')) return null;
+  }
 
   // A Evolution manda `data` como objeto; em alguns modos, como lista.
   const bruto = Array.isArray(corpo.data) ? corpo.data[0] : corpo.data;
@@ -112,8 +117,9 @@ async function ultimaEnviadaPara(numero: string): Promise<Delivery | null> {
 
   if (erroCreator) throw new Error(`busca de criadoras: ${erroCreator.message}`);
 
-  const creator = (creators ?? []).find(
-    (c: { whatsapp: string }) => normalizarWhatsapp(c.whatsapp) === numero,
+  const doRecebido = new Set(variantesWhatsapp(numero));
+  const creator = (creators ?? []).find((c: { whatsapp: string }) =>
+    variantesWhatsapp(c.whatsapp).some((v) => doRecebido.has(v)),
   ) as { id: string } | undefined;
 
   if (!creator) return null;
@@ -142,7 +148,17 @@ async function ultimaEnviadaPara(numero: string): Promise<Delivery | null> {
 export async function processarInbound(payload: unknown): Promise<ResultadoInbound> {
   const mensagem = extrairMensagem(payload);
 
-  if (!mensagem) return { status: 'ignorado', motivo: 'payload sem mensagem de texto' };
+  if (!mensagem) {
+    // Sem isto, um payload em formato inesperado sumia sem deixar rastro no log.
+    const corpo = typeof payload === 'object' && payload !== null
+      ? (payload as Record<string, unknown>)
+      : {};
+    logger.warn('webhook não reconhecido como mensagem de texto', {
+      evento: corpo.event ?? '(sem campo event)',
+      chaves: Object.keys(corpo),
+    });
+    return { status: 'ignorado', motivo: 'payload sem mensagem de texto' };
+  }
   if (mensagem.minha) return { status: 'ignorado', motivo: 'eco de mensagem própria' };
 
   const feedback = lerFeedback(mensagem.texto);

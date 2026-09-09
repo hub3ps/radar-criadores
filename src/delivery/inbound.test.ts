@@ -95,3 +95,31 @@ describe('tokenValido', () => {
     assert.equal(tokenValido(''), false);
   });
 });
+
+describe('extrairMensagem — formatos que a Evolution manda de verdade', () => {
+  const comEvento = (evento: string) => ({
+    event: evento,
+    data: {
+      key: { remoteJid: '5547996489767@s.whatsapp.net', fromMe: false, id: 'A' },
+      message: { conversation: '1' },
+    },
+  });
+
+  test('aceita MESSAGES_UPSERT em maiúscula com underscore', () => {
+    // Foi exatamente isto que fez o primeiro feedback real sumir em produção.
+    assert.equal(extrairMensagem(comEvento('MESSAGES_UPSERT'))?.texto, '1');
+  });
+
+  test('aceita messages.upsert em minúscula com ponto', () => {
+    assert.equal(extrairMensagem(comEvento('messages.upsert'))?.texto, '1');
+  });
+
+  test('aceita variações de caixa', () => {
+    assert.equal(extrairMensagem(comEvento('Messages.Upsert'))?.texto, '1');
+  });
+
+  test('continua recusando outros eventos', () => {
+    assert.equal(extrairMensagem(comEvento('CONNECTION_UPDATE')), null);
+    assert.equal(extrairMensagem(comEvento('contacts.update')), null);
+  });
+});

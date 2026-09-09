@@ -60,3 +60,23 @@ export function formatarMensagem(entrada: EntradaMensagem, agora: Date = new Dat
 export function normalizarWhatsapp(numero: Creator['whatsapp']): string {
   return numero.replace(/\D/g, '');
 }
+
+/**
+ * Formas equivalentes do mesmo celular brasileiro.
+ *
+ * Desde 2016 o celular tem nove dígitos, mas o WhatsApp ainda entrega o JID sem
+ * o nono em números antigos — e às vezes com. Comparar string exata faz o
+ * feedback de `5547996489767` não casar com `554796489767`, que é a mesma pessoa.
+ */
+export function variantesWhatsapp(numero: string): string[] {
+  const so = normalizarWhatsapp(numero);
+  const variantes = new Set([so]);
+
+  const comNono = /^55(\d{2})9(\d{8})$/.exec(so);
+  if (comNono) variantes.add(`55${comNono[1]}${comNono[2]}`);
+
+  const semNono = /^55(\d{2})(\d{8})$/.exec(so);
+  if (semNono) variantes.add(`55${semNono[1]}9${semNono[2]}`);
+
+  return [...variantes];
+}

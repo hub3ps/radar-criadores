@@ -91,6 +91,8 @@ export interface DeliveryParaEnvio {
 export type EtapaOnboarding =
   | 'nicho'
   | 'perfil'
+  | 'cobre'
+  | 'evita'
   | 'sites'
   | 'instagram'
   | 'tiktok'
@@ -118,6 +120,10 @@ export interface Onboarding {
   etapa: EtapaOnboarding;
   nicho: string | null;
   perfil_texto: string | null;
+  /** O que a faz querer gravar. */
+  cobre: string | null;
+  /** O que ela nunca cobriria — é o que mais discrimina no scorer. */
+  evita: string | null;
   sites: SiteEscolhido[];
   /** handles sem arroba */
   instagram: string[];

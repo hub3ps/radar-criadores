@@ -99,10 +99,16 @@ migrations/
 
 ## Cadastro pelo WhatsApp
 
-Uma criadora nova se cadastra conversando. O fluxo é um roteiro fixo de cinco
-perguntas — nicho, o que ela procura, sites, Instagram, TikTok — e o modelo entra
-só para interpretar a resposta livre dela (achar handles e domínios no meio do
-texto), nunca para conduzir a conversa. O estado mora em `radar.onboardings`,
+Uma criadora nova se cadastra conversando. O fluxo é um roteiro fixo de seis
+perguntas — nicho e público, o que a faz gravar, o que ela nunca cobriria, sites,
+Instagram, TikTok — e o modelo entra só para interpretar a resposta livre dela
+(achar handles e domínios no meio do texto), nunca para conduzir a conversa.
+
+**"O que te faz gravar" e "o que você nunca cobriria" são perguntas separadas de
+propósito.** Na primeira versão elas vinham juntas com "para quem você fala", e a
+primeira criadora respondeu só o público — a sub-pergunta mais fácil. O perfil
+resultante descrevia a audiência e não a cobertura, e o scorer ficou sem o que
+mais discrimina: a lista do que ela não quer. Uma pergunta, um assunto. O estado mora em `radar.onboardings`,
 porque o processo reinicia a cada deploy e a conversa não pode recomeçar do zero.
 
 **Só quem está em `radar.convites` consegue se cadastrar.** Sem essa lista,

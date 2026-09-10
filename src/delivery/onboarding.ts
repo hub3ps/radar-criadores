@@ -25,34 +25,55 @@ const MAX_POR_TIPO = config.runtime.cadastroMaxFontes;
 // Textos
 // ---------------------------------------------------------------------------
 
-const PERGUNTAS: Record<Exclude<EtapaOnboarding, 'concluido'>, string> = {
+const PERGUNTAS: Record<Exclude<EtapaOnboarding, 'concluido' | 'perfil'>, string> = {
   nicho:
     'Oi! Eu sou o radar 👋\n\n' +
     'Eu vigio as fontes que você escolher e te aviso no WhatsApp assim que sai ' +
     'alguma novidade que vale virar vídeo — com um resumo e um gancho pronto.\n\n' +
-    'Vamos te cadastrar em 5 perguntas rápidas.\n\n' +
-    '*1 de 5* — Qual é o nicho do seu conteúdo?',
+    'São 6 perguntas rápidas.\n\n' +
+    '*1 de 6* — Qual é o nicho do seu conteúdo, e para quem você fala?',
 
-  perfil:
-    '*2 de 5* — Me conta com detalhe o que você procura.\n\n' +
-    'Que tipo de novidade te faz querer gravar? Para quem você fala? ' +
-    'E o que definitivamente *não* te interessa?\n\n' +
-    'Quanto mais específico, melhor eu acerto. Pode escrever à vontade.',
+  // Antes isto vinha junto com "para quem você fala" e "o que não te interessa".
+  // A primeira criadora respondeu só o público. Uma pergunta, um assunto.
+  cobre:
+    '*2 de 6* — O que te faz querer gravar?\n\n' +
+    'Que tipo de novidade você corre atrás? Anúncio de elenco, trailer, data de ' +
+    'estreia, adaptação de livro, bastidor? Quanto mais específico, melhor eu acerto.',
+
+  evita:
+    '*3 de 6* — E o que você *nunca* cobriria?\n\n' +
+    'Essa é a que mais me ajuda: é o que me impede de te encher de coisa que não ' +
+    'presta. Pode ser assunto, formato, tom — o que for.',
 
   sites:
-    `*3 de 5* — Quais sites você quer que eu acompanhe? (até ${MAX_POR_TIPO})\n\n` +
+    `*4 de 6* — Quais sites você quer que eu acompanhe? (até ${MAX_POR_TIPO})\n\n` +
     'Pode mandar o endereço ou só o nome, um por linha.',
 
   instagram:
-    `*4 de 5* — Quais perfis do Instagram? (até ${MAX_POR_TIPO})\n\n` +
+    `*5 de 6* — Quais perfis do Instagram? (até ${MAX_POR_TIPO})\n\n` +
     'Manda o @ de cada um. Se não quiser nenhum, responde *pular*.',
 
   tiktok:
-    `*5 de 5* — E do TikTok? (até ${MAX_POR_TIPO})\n\n` +
+    `*6 de 6* — E do TikTok? (até ${MAX_POR_TIPO})\n\n` +
     'Manda o @ de cada um. Se não quiser nenhum, responde *pular*.',
 
   confirmacao: '',
 };
+
+/**
+ * Monta o `perfil_texto` a partir das respostas separadas.
+ * A estrutura COBRE / NÃO COBRE é o que faz o scorer discriminar: sem a lista
+ * do que ela não quer, ele dá nota média para quase tudo.
+ */
+export function montarPerfil(o: Pick<Onboarding, 'nicho' | 'cobre' | 'evita'>): string {
+  return [
+    o.nicho ? `Público e nicho: ${o.nicho.trim()}` : null,
+    o.cobre ? `\nCOBRE — o que a faz querer gravar:\n${o.cobre.trim()}` : null,
+    o.evita ? `\nNÃO COBRE — o que ela nunca cobriria:\n${o.evita.trim()}` : null,
+  ]
+    .filter((l) => l !== null)
+    .join('\n');
+}
 
 const NAO_CONVIDADA =
   'Oi! Esse número é do radar de criadores, um serviço em fase fechada de testes.\n\n' +
@@ -154,9 +175,11 @@ export function montarResumo(o: Onboarding): string {
   return [
     'Fechou! Confere se está certo:',
     '',
-    `*Nicho:* ${o.nicho ?? '—'}`,
+    `*Nicho e público:* ${o.nicho ?? '—'}`,
     '',
-    `*O que você procura:*\n${o.perfil_texto ?? '—'}`,
+    `*O que te faz gravar:*\n${o.cobre ?? '—'}`,
+    '',
+    `*O que você não cobre:*\n${o.evita ?? '—'}`,
     '',
     listar('*Sites*', o.sites.map((s) => s.nome)),
     listar('*Instagram*', o.instagram, '@'),
@@ -183,7 +206,7 @@ async function concluir(o: Onboarding): Promise<string> {
       nome: o.nicho ? `Criadora — ${o.nicho}`.slice(0, 60) : 'Criadora',
       whatsapp: paraEnvio,
       nicho: o.nicho,
-      perfil_texto: o.perfil_texto ?? '',
+      perfil_texto: montarPerfil(o),
       ativo: true,
     })
     .select('id')
@@ -298,13 +321,24 @@ export async function responder(
 
   switch (o.etapa) {
     case 'nicho': {
-      await avancar({ nicho: limpo.slice(0, 120), etapa: 'perfil' });
-      return { texto: PERGUNTAS.perfil };
+      await avancar({ nicho: limpo.slice(0, 200), etapa: 'cobre' });
+      return { texto: PERGUNTAS.cobre };
     }
 
-    case 'perfil': {
-      await avancar({ perfil_texto: limpo.slice(0, 4000), etapa: 'sites' });
+    case 'cobre': {
+      await avancar({ cobre: limpo.slice(0, 2000), etapa: 'evita' });
+      return { texto: PERGUNTAS.evita };
+    }
+
+    case 'evita': {
+      await avancar({ evita: limpo.slice(0, 2000), etapa: 'sites' });
       return { texto: PERGUNTAS.sites };
+    }
+
+    // Etapa antiga, mantida para cadastros que já estavam em andamento.
+    case 'perfil': {
+      await avancar({ cobre: limpo.slice(0, 2000), etapa: 'evita' });
+      return { texto: PERGUNTAS.evita };
     }
 
     case 'sites': {
@@ -373,6 +407,8 @@ export async function responder(
           etapa: 'nicho',
           nicho: null,
           perfil_texto: null,
+          cobre: null,
+          evita: null,
           sites: [],
           instagram: [],
           tiktok: [],

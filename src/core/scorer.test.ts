@@ -76,3 +76,30 @@ describe('interpretarResposta', () => {
     assert.equal(saida.score, 8);
   });
 });
+
+describe('limpeza de artefato de JSON no texto', () => {
+  const base = { score: 7, motivo: 'ok', resumo: 'ok', gancho: '' };
+  const gancho = (g: string) => interpretarResposta(JSON.stringify({ ...base, gancho: g })).gancho;
+
+  test('remove o `"}` que vazou em produção', () => {
+    // Chegou assim no WhatsApp dela: o modelo pôs o artefato DENTRO da string,
+    // então o JSON era válido e o parse não tinha como perceber.
+    assert.equal(gancho('a coisa mais Ted Lasso que já aconteceu."}'), 'a coisa mais Ted Lasso que já aconteceu.');
+  });
+
+  test('remove chave e colchete soltos no fim', () => {
+    assert.equal(gancho('acabou.}'), 'acabou.');
+    assert.equal(gancho('acabou.]'), 'acabou.');
+    assert.equal(gancho('acabou.\\"}'), 'acabou.');
+  });
+
+  test('preserva aspas legítimas no fim da frase', () => {
+    // Sem chave junto, aspas são conteúdo: pode ser fala citada.
+    assert.equal(gancho('e ela disse "acabou"'), 'e ela disse "acabou"');
+  });
+
+  test('não mexe em texto normal', () => {
+    assert.equal(gancho('O Gus Fring entrou num filme de terror — e ninguém sabe do quê.'),
+                 'O Gus Fring entrou num filme de terror — e ninguém sabe do quê.');
+  });
+});

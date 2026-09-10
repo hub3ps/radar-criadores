@@ -72,10 +72,23 @@ function montarConteudoItem(
 function normalizar(saida: RespostaScorer): RespostaScorer {
   return {
     score: Math.min(10, Math.max(0, Math.round(saida.score))),
-    motivo: saida.motivo.trim(),
-    resumo: saida.resumo.trim(),
-    gancho: saida.gancho.trim(),
+    motivo: limpar(saida.motivo),
+    resumo: limpar(saida.resumo),
+    gancho: limpar(saida.gancho),
   };
+}
+
+/**
+ * Tira restos de JSON grudados no fim do texto.
+ *
+ * Aconteceu em produção: um gancho chegou no WhatsApp terminando em `."}`.
+ * O modelo emitiu o artefato DENTRO da string, então o JSON era válido e o
+ * parse defensivo não tinha como perceber. Fecha-chaves no fim de uma frase em
+ * português é sempre lixo, nunca conteúdo — diferente de aspas, que podem ser
+ * legítimas (`ela disse "acabou"`), e por isso só removemos com chave junto.
+ */
+function limpar(texto: string): string {
+  return texto.trim().replace(/\\?["'`]?\s*[}\]]+\s*$/, '').trim();
 }
 
 /** Valida e normaliza a resposta crua do modelo. Exposto para teste. */

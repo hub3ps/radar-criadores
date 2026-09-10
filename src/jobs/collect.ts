@@ -1,5 +1,5 @@
 import { coletores, TIPOS_SOCIAIS } from '../collectors/index.js';
-import { dedupePorHash } from '../core/dedupe.js';
+import { dedupePorHash, slugDaUrl } from '../core/dedupe.js';
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { log } from '../logger.js';
@@ -38,6 +38,36 @@ async function hashesConhecidos(hashes: string[]): Promise<Set<string>> {
   return new Set((data ?? []).map((linha: { url_hash: string }) => linha.url_hash));
 }
 
+/** Por quanto tempo um slug já visto continua bloqueando uma republicação. */
+const JANELA_SLUG_HORAS = 72;
+
+/**
+ * Slugs que esta fonte já publicou recentemente.
+ *
+ * O `url_hash` não pega a mesma matéria republicada sob outra categoria —
+ * `/cultura-pop/x/` e `/series/x/`. Aconteceu de verdade: a criadora recebeu o
+ * mesmo item duas vezes, com 5 minutos de diferença, e pagamos o scorer duas
+ * vezes. A janela evita carregar o histórico inteiro da fonte a cada coleta.
+ */
+async function slugsRecentes(sourceId: string): Promise<Set<string>> {
+  const desde = new Date(Date.now() - JANELA_SLUG_HORAS * 3_600_000).toISOString();
+
+  const { data, error } = await db
+    .from('items')
+    .select('url')
+    .eq('source_id', sourceId)
+    .gte('coletado_em', desde);
+
+  if (error) throw new Error(`consulta de slugs: ${error.message}`);
+
+  const slugs = new Set<string>();
+  for (const linha of (data ?? []) as { url: string }[]) {
+    const slug = slugDaUrl(linha.url);
+    if (slug !== null) slugs.add(slug);
+  }
+  return slugs;
+}
+
 /**
  * Coleta uma fonte e grava o que for inédito.
  *
@@ -65,10 +95,23 @@ async function coletarFonte(fonte: Source, limite: number): Promise<{ coletados:
   }
 
   const comHash = dedupePorHash(brutos);
-  const jaConhecidos = await hashesConhecidos(comHash.map((i) => i.url_hash));
+  const [jaConhecidos, jaPublicados] = await Promise.all([
+    hashesConhecidos(comHash.map((i) => i.url_hash)),
+    slugsRecentes(fonte.id),
+  ]);
 
   const novos: ItemNovo[] = comHash
-    .filter((item) => !jaConhecidos.has(item.url_hash))
+    .filter((item) => {
+      if (jaConhecidos.has(item.url_hash)) return false;
+
+      // Mesma matéria sob outra categoria: URL diferente, conteúdo igual.
+      const slug = slugDaUrl(item.url);
+      if (slug !== null && jaPublicados.has(slug)) {
+        logger.debug('slug repetido em outro caminho', { fonte: fonte.nome, url: item.url });
+        return false;
+      }
+      return true;
+    })
     .map((item) => ({
       source_id: fonte.id,
       url: item.url,

@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalizarUrl, dedupePorHash, hashUrl } from './dedupe.js';
+import { canonicalizarUrl, dedupePorHash, hashUrl, slugDaUrl } from './dedupe.js';
 
 describe('canonicalizarUrl', () => {
   test('remove parâmetros de rastreamento', () => {
@@ -67,5 +67,45 @@ describe('dedupePorHash', () => {
   test('anexa url_hash em cada item', () => {
     const [item] = dedupePorHash([{ url: 'https://site.com/a' }]);
     assert.equal(item?.url_hash, hashUrl('https://site.com/a'));
+  });
+});
+
+describe('slugDaUrl e a republicação sob outra categoria', () => {
+  test('extrai o slug do último segmento', () => {
+    assert.equal(
+      slugDaUrl('https://site.com/series/a-garota-do-remo-netflix-serie-indicacao/'),
+      'a-garota-do-remo-netflix-serie-indicacao',
+    );
+  });
+
+  test('a MESMA matéria sob categorias diferentes tem o mesmo slug', () => {
+    // Caso real: a criadora recebeu este item duas vezes, com 5 min de diferença.
+    const a = 'https://observatoriodocinema.com.br/cultura-pop/a-garota-do-remo-netflix-serie-indicacao/';
+    const b = 'https://observatoriodocinema.com.br/series/a-garota-do-remo-netflix-serie-indicacao/';
+    assert.notEqual(hashUrl(a), hashUrl(b), 'as URLs são mesmo diferentes');
+    assert.equal(slugDaUrl(a), slugDaUrl(b), 'mas o slug é o mesmo');
+  });
+
+  test('matérias diferentes do mesmo assunto continuam distintas', () => {
+    assert.notEqual(
+      slugDaUrl('https://site.com/criticas/a-garota-do-remo-critica/'),
+      slugDaUrl('https://site.com/series/a-garota-do-remo-final-explicado/'),
+    );
+  });
+
+  test('slug curto demais não serve de identificador', () => {
+    assert.equal(slugDaUrl('https://site.com/p/1'), null);
+    assert.equal(slugDaUrl('https://site.com/'), null);
+  });
+
+  test('dedupePorHash descarta o slug repetido dentro do lote', () => {
+    const itens = dedupePorHash([
+      { url: 'https://site.com/cultura-pop/a-garota-do-remo-netflix/', titulo: 'primeiro' },
+      { url: 'https://site.com/series/a-garota-do-remo-netflix/', titulo: 'republicado' },
+      { url: 'https://site.com/series/outra-materia-diferente/', titulo: 'outro' },
+    ]);
+    assert.equal(itens.length, 2);
+    assert.equal(itens[0]?.titulo, 'primeiro');
+    assert.equal(itens[1]?.titulo, 'outro');
   });
 });

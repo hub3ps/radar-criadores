@@ -72,15 +72,50 @@ export function hashUrl(bruta: string): string {
   return createHash('sha256').update(canonicalizarUrl(bruta)).digest('hex');
 }
 
-/** Remove duplicatas dentro do próprio lote, antes mesmo de consultar o banco. */
+/**
+ * Último segmento do caminho — o "slug" do artigo.
+ *
+ * Muitos sites publicam a MESMA matéria sob categorias diferentes:
+ * `/cultura-pop/a-garota-do-remo-netflix/` e `/series/a-garota-do-remo-netflix/`
+ * são a mesma coisa com URLs distintas. O `url_hash` não pega isso, e a criadora
+ * recebe o item duas vezes — além de pagarmos o scorer duas vezes.
+ *
+ * Devolve `null` quando não há slug utilizável (raiz do site, ou slug curto
+ * demais para ser identificador confiável, como `/p/1`).
+ */
+export function slugDaUrl(bruta: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(canonicalizarUrl(bruta));
+  } catch {
+    return null;
+  }
+
+  const partes = url.pathname.split('/').filter((p) => p !== '');
+  const slug = partes.at(-1);
+  if (!slug || slug.length < 12) return null;
+
+  return slug.toLowerCase();
+}
+
+/**
+ * Remove duplicatas dentro do próprio lote, antes mesmo de consultar o banco.
+ * Considera duplicata tanto a URL igual quanto o mesmo slug em caminho diferente.
+ */
 export function dedupePorHash<T extends { url: string }>(itens: T[]): (T & { url_hash: string })[] {
-  const vistos = new Set<string>();
+  const hashes = new Set<string>();
+  const slugs = new Set<string>();
   const saida: (T & { url_hash: string })[] = [];
 
   for (const item of itens) {
     const url_hash = hashUrl(item.url);
-    if (vistos.has(url_hash)) continue;
-    vistos.add(url_hash);
+    if (hashes.has(url_hash)) continue;
+
+    const slug = slugDaUrl(item.url);
+    if (slug !== null && slugs.has(slug)) continue;
+
+    hashes.add(url_hash);
+    if (slug !== null) slugs.add(slug);
     saida.push({ ...item, url_hash });
   }
 

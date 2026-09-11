@@ -37,7 +37,6 @@ describe('formatarMensagem', () => {
     assert.equal(
       formatarMensagem(entrada, AGORA),
       [
-        '[8] Nubank lança conta internacional',
         'Valor Econômico · há 12 min',
         '',
         'Duas linhas de resumo.\nCom o ponto principal.',
@@ -46,9 +45,19 @@ describe('formatarMensagem', () => {
         '',
         'https://site.com/materia',
         '',
-        'Responde: 1 = gravaria · 2 = talvez · 3 = lixo',
+        'Responde: 1 = vou gravar · 2 = talvez · 3 = lixo',
       ].join('\n'),
     );
+  });
+
+  test('não mostra o título da matéria', () => {
+    // É manchete escrita para outro público e atrapalha a leitura do resumo.
+    assert.ok(!formatarMensagem(entrada, AGORA).includes('Nubank lança conta internacional'));
+  });
+
+  test('não mostra a nota', () => {
+    // A nota filtra antes do envio; na mão da criadora ela não serve para nada.
+    assert.ok(!/\[\d+\]/.test(formatarMensagem(entrada, AGORA)));
   });
 
   test('sem publicado_em, usa o momento da coleta', () => {
@@ -67,14 +76,14 @@ describe('formatarMensagem', () => {
     assert.match(texto, /há agora/);
   });
 
-  test('score nulo vira 0 em vez de sumir da mensagem', () => {
+  test('score nulo não quebra a mensagem', () => {
     const texto = formatarMensagem({ ...entrada, delivery: { ...entrada.delivery, score: null } }, AGORA);
-    assert.match(texto, /^\[0\] /);
+    assert.match(texto, /^Valor Econômico/);
   });
 
   test('a instrução de resposta é sempre a última linha', () => {
     const linhas = formatarMensagem(entrada, AGORA).split('\n');
-    assert.equal(linhas.at(-1), 'Responde: 1 = gravaria · 2 = talvez · 3 = lixo');
+    assert.equal(linhas.at(-1), 'Responde: 1 = vou gravar · 2 = talvez · 3 = lixo');
   });
 });
 

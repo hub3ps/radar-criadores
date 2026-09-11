@@ -26,8 +26,15 @@ export interface EntradaMensagem {
 }
 
 /**
- * Monta a mensagem do WhatsApp. Formato fixo — a última linha é o que ensina a
- * responder 1/2/3, e é dela que sai todo o feedback da calibragem.
+ * Monta a mensagem do WhatsApp.
+ *
+ * Sem o título da matéria e sem a nota, por pedido da primeira criadora usando
+ * o produto de verdade: o título é manchete escrita para outro público e só
+ * atrapalha a leitura do resumo, e a nota não serve para nada na mão dela —
+ * ela existe para filtrar antes do envio, não para ser lida.
+ *
+ * A última linha é o que ensina a responder 1/2/3, e é dela que sai todo o
+ * feedback da calibragem.
  */
 export function formatarMensagem(entrada: EntradaMensagem, agora: Date = new Date()): string {
   const { delivery, item, nomeFonte } = entrada;
@@ -36,12 +43,10 @@ export function formatarMensagem(entrada: EntradaMensagem, agora: Date = new Dat
   const referencia = new Date(item.publicado_em ?? item.coletado_em);
   const quando = Number.isNaN(referencia.getTime()) ? agora : referencia;
 
-  const score = delivery.score ?? 0;
   const resumo = (delivery.resumo ?? '').trim();
   const gancho = (delivery.gancho ?? '').trim();
 
   const linhas = [
-    `[${score}] ${item.titulo.trim()}`,
     `${nomeFonte} · há ${tempoRelativo(quando, agora)}`,
     '',
     resumo,
@@ -50,7 +55,7 @@ export function formatarMensagem(entrada: EntradaMensagem, agora: Date = new Dat
     '',
     item.url,
     '',
-    'Responde: 1 = gravaria · 2 = talvez · 3 = lixo',
+    'Responde: 1 = vou gravar · 2 = talvez · 3 = lixo',
   ];
 
   return linhas.join('\n');

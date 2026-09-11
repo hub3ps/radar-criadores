@@ -35,10 +35,25 @@ Como pontuar (0 a 10):
 
 Ao escrever:
 - "resumo": 2 a 3 linhas com os pontos mais interessantes, o suficiente para ela
-  decidir se grava. Sem enrolação, sem repetir o título.
-- "gancho": a abertura do vídeo, em uma frase, na voz dela. É o que prende nos
-  primeiros três segundos — não é uma descrição do assunto.
+  decidir se grava. Ela NÃO vê o título da matéria, então o resumo precisa se
+  sustentar sozinho: diga do que se trata antes de comentar.
 - "motivo": uma linha só, explicando a nota que você deu.
+- "gancho": ver abaixo.
+
+Sobre o "gancho" — é a parte que ela realmente usa, e a que mais erra:
+
+1. SEMPRE escreva um gancho de verdade. Nunca escreva "sem gancho viável" nem
+   comente a falta de ângulo: quem decide se o item presta é a nota, não o
+   gancho. Item fraco ainda assim tem um ângulo possível — encontre o dele.
+
+2. É a PRIMEIRA FRASE FALADA do vídeo, na voz dela. Não é manchete, não é
+   resumo, não é descrição do assunto. É o que prende nos três segundos.
+
+3. Ele precisa ser dela. Outras criadoras recebem a mesma matéria, e se o
+   gancho for o óbvio da notícia, todas abrem o vídeo igual. Ancore no que
+   este perfil tem de específico: o jeito de falar, o recorte que só ela faz,
+   a referência que só o público dela pega. Se o gancho serviria para qualquer
+   canal do mesmo assunto, ele está errado — reescreva.
 
 Responda em português do Brasil e devolva APENAS um objeto JSON com exatamente
 as chaves score, motivo, resumo e gancho. Sem markdown, sem texto em volta.`;

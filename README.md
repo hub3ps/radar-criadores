@@ -387,6 +387,26 @@ fontes_catalogo
   medir o volume é automático
 - feed morre: prever um job que revalide o catálogo e marque as quebradas
 
+### Cadastro sem digitar — adiado
+
+A primeira criadora pediu que o cadastro não exija digitação. Existe uma tensão
+real: é digitando que sai a informação que faz o produto funcionar. A resposta
+"o que você nunca cobriria" foi o que derrubou o ruído de nota 3 para 0-2, e o
+primeiro perfil dela, que só descrevia a audiência, gerava nota média para tudo.
+
+Então: tirar a digitação de onde ela é chata, não de onde ela é útil.
+
+- **manter** como texto livre: nicho/público, "o que te faz gravar", "o que você
+  nunca cobriria" — as três que alimentam o `perfil_texto`
+- **tirar** das fontes: lista numerada em vez de "quais sites você quer?". É o
+  catálogo acima por outro ângulo; as duas devem ser construídas juntas
+- **acrescentar** o @ da própria criadora. Hoje a voz dela foi extraída na mão
+  dos posts com `src/testing/perfil-do-criador.ts`; devia sair no cadastro
+
+A voz importa mais do que parecia. A criadora apontou que, se ela e outra
+receberem a mesma matéria com o mesmo gancho, abrem o vídeo igual — é a voz de
+cada uma no perfil que separa os dois.
+
 ### Outras pendências
 
 - Substituir o `perfil_texto` rascunhado pelo Claude por um escrito pela criadora

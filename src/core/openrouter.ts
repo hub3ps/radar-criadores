@@ -71,11 +71,13 @@ interface Pedido {
   /** Nome do schema, para o provedor. snake_case. */
   nome: string;
   maxTokens?: number;
+  /** Sobrescreve o modelo padrão — a triagem usa um mais barato. */
+  modelo?: string;
 }
 
 function montarCorpo(pedido: Pedido, schema: z.ZodType, comSchema: boolean): Record<string, unknown> {
   const corpo: Record<string, unknown> = {
-    model: config.openrouter.modelo,
+    model: pedido.modelo ?? config.openrouter.modelo,
     max_tokens: pedido.maxTokens ?? 8000,
     messages: [
       { role: 'system', content: pedido.system },
@@ -156,7 +158,7 @@ export async function pedirJson<T>(pedido: Pedido, schema: z.ZodType<T>): Promis
     // Endpoint sem structured output: as instruções já pedem JSON puro e o
     // parse defensivo cobre o resto.
     logger.warn('endpoint sem structured output — repetindo sem schema', {
-      modelo: config.openrouter.modelo,
+      modelo: pedido.modelo ?? config.openrouter.modelo,
       detalhe: mensagem.slice(0, 200),
     });
     dados = await chamar(montarCorpo(pedido, schema, false));

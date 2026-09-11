@@ -202,6 +202,9 @@ npm run job -- dispatch
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | Chave da API |
 | `OPENROUTER_MODEL` | `anthropic/claude-opus-5` | Formato `fornecedor/modelo` |
+| `OPENROUTER_MODELO_TRIAGEM` | `anthropic/claude-haiku-4.5` | Modelo barato da triagem |
+| `TRIAGEM_ATIVA` | `false` | Liga a triagem antes do scorer |
+| `TRIAGEM_CORTE` | `4` | Abaixo disto o item nem chega ao modelo caro |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Trocar só para apontar noutro gateway |
 | `OPENROUTER_REASONING_EFFORT` | `none` | `none` / `low` / `medium` / `high` |
 
@@ -250,6 +253,30 @@ suportar, o scorer repete sem o schema e cai no parse defensivo.
 | `TZ` | `America/Sao_Paulo` | Base do cron, da janela de silêncio e do teto diário |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BACKFILL_PRIMEIRA_COLETA` | `false` | Na 1ª coleta de uma fonte nova, marca o histórico como visto sem entregar |
+
+## Triagem: por que existem dois modelos
+
+O filtro de score roda no `dispatch`, **depois** do scorer — e não pode ser
+diferente, porque para saber se a nota passa do corte é preciso primeiro gerá-la.
+Medido em produção: 89% dos itens pontuados nunca chegavam à criadora, mas eram
+pagos igual, a ~US$ 0,035 cada.
+
+A triagem resolve isso sem tocar na qualidade do que ela recebe. Um modelo barato
+dá **só uma nota**, com o texto truncado em 1.500 caracteres; quem passa vai para
+o modelo caro, que escreve resumo e gancho como sempre.
+
+O corte da triagem fica folgadamente abaixo do corte de envio, e a razão é
+assimétrica: errar para cima custa uma chamada a mais ao modelo caro; errar para
+baixo mata uma novidade boa em silêncio. Por isso, também, **falha de triagem
+deixa o item passar** em vez de descartá-lo.
+
+Validado contra 154 itens reais já pontuados pelo modelo caro: nenhum item bom
+(nota >= 6) recebeu triagem abaixo de **7**, contra um corte de 4. Nenhuma perda
+em corte algum de 1 a 5, com 77% de economia no corte escolhido.
+`src/testing/triagem-validar.ts` refaz essa medição quando o perfil mudar.
+
+Quem não passa vira delivery `descartado` com a nota da triagem — precisa virar
+linha no banco, senão o item seria triado de novo a cada rodada.
 
 ## Quão recente é o que ela recebe
 

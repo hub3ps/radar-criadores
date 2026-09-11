@@ -27,6 +27,8 @@ const Env = z.object({
   OPENROUTER_API_KEY: z.string().min(1),
   OPENROUTER_MODEL: z.string().default('anthropic/claude-opus-5'),
   OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
+  // Modelo barato da triagem. Só dá nota; resumo e gancho seguem no modelo caro.
+  OPENROUTER_MODELO_TRIAGEM: z.string().default('anthropic/claude-haiku-4.5'),
   // `none` não manda o parâmetro de raciocínio — mais barato e menos coisa
   // para o roteamento recusar. Suba se as notas vierem rasas.
   OPENROUTER_REASONING_EFFORT: z.enum(['none', 'low', 'medium', 'high']).default('none'),
@@ -77,6 +79,11 @@ const Env = z.object({
   RSS_BUSCAR_CORPO: booleano(true),
   // Quantos sites / perfis de cada rede o cadastro aceita por criadora.
   CADASTRO_MAX_FONTES: inteiro(2),
+  // Triagem barata antes do scorer completo.
+  TRIAGEM_ATIVA: booleano(false),
+  // Abaixo disto o item nem chega ao modelo caro. Deve ficar FOLGADAMENTE
+  // abaixo do corte de envio: errar para baixo aqui mata novidade boa.
+  TRIAGEM_CORTE: inteiro(0, 0),
 });
 
 function carregar() {
@@ -102,6 +109,7 @@ function carregar() {
     openrouter: {
       apiKey: e.OPENROUTER_API_KEY,
       modelo: e.OPENROUTER_MODEL,
+      modeloTriagem: e.OPENROUTER_MODELO_TRIAGEM,
       baseUrl: e.OPENROUTER_BASE_URL.replace(/\/+$/, ''),
       reasoningEffort: e.OPENROUTER_REASONING_EFFORT,
     },
@@ -141,6 +149,8 @@ function carregar() {
       itemIdadeMaxHoras: e.ITEM_IDADE_MAX_HORAS,
       rssBuscarCorpo: e.RSS_BUSCAR_CORPO,
       cadastroMaxFontes: e.CADASTRO_MAX_FONTES,
+      triagemAtiva: e.TRIAGEM_ATIVA,
+      triagemCorte: e.TRIAGEM_CORTE,
     },
   });
 }

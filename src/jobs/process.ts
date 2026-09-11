@@ -1,4 +1,5 @@
 import { ErroScorer, pontuar } from '../core/scorer.js';
+import { triar } from '../core/triagem.js';
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { log } from '../logger.js';
@@ -10,6 +11,8 @@ export interface ResumoProcess {
   criadoras: number;
   avaliados: number;
   falhos: number;
+  /** Descartados na triagem, sem chegar ao modelo caro. */
+  triados: number;
 }
 
 async function criadorasAtivas(): Promise<Creator[]> {
@@ -39,17 +42,6 @@ async function fontesDaCriadora(creatorId: string): Promise<Map<string, string>>
 }
 
 /**
- * Itens das fontes da criadora que ainda não viraram delivery para ela.
- *
- * Três filtros:
- * - `entregavel`, que exclui o backfill da primeira coleta de uma fonte
- * - validade: novidade de três dias atrás não é novidade, e pagar o scorer
- *   por ela é desperdício
- * - a data de cadastro dela. A proteção de backfill é por FONTE, não por
- *   criadora: sem este corte, quem se cadastra numa fonte que já está sendo
- *   coletada recebe o backlog inteiro de 48h no primeiro minuto.
- */
-/**
  * O item foi publicado recentemente?
  *
  * Todos os outros filtros medem `coletado_em` — quando NÓS vimos o item. Se o
@@ -68,6 +60,17 @@ export function recemPublicado(item: Item): boolean {
   return idadeHoras <= config.runtime.itemIdadeMaxHoras;
 }
 
+/**
+ * Itens das fontes da criadora que ainda não viraram delivery para ela.
+ *
+ * Três filtros:
+ * - `entregavel`, que exclui o backfill da primeira coleta de uma fonte
+ * - validade: novidade de três dias atrás não é novidade, e pagar o scorer
+ *   por ela é desperdício
+ * - a data de cadastro dela. A proteção de backfill é por FONTE, não por
+ *   criadora: sem este corte, quem se cadastra numa fonte que já está sendo
+ *   coletada recebe o backlog inteiro de 48h no primeiro minuto.
+ */
 async function itensPendentes(creator: Creator, sourceIds: string[], limite: number): Promise<Item[]> {
   if (sourceIds.length === 0) return [];
 
@@ -111,15 +114,54 @@ async function itensPendentes(creator: Creator, sourceIds: string[], limite: num
 }
 
 /**
+ * Triagem: a nota barata decide quem chega ao modelo caro.
+ *
+ * Devolve `null` quando o item passa, ou o registro de descarte quando não.
+ * Se a triagem falhar, o item PASSA — uma falha de infraestrutura não pode
+ * custar uma novidade boa, e o custo de um scorer a mais é irrelevante perto
+ * disso. Medido em 154 itens reais: nenhum item bom recebeu triagem abaixo de
+ * 7, contra um corte de 4.
+ */
+async function descartadoNaTriagem(
+  creator: Creator,
+  item: Item,
+  nomeFonte: string,
+): Promise<Record<string, unknown> | null> {
+  if (!config.runtime.triagemAtiva) return null;
+
+  let nota: number;
+  try {
+    nota = await triar({ creator, item, nomeFonte });
+  } catch (erro) {
+    logger.warn('triagem falhou — item segue para o scorer', { itemId: item.id, erro });
+    return null;
+  }
+
+  if (nota >= config.runtime.triagemCorte) return null;
+
+  return {
+    creator_id: creator.id,
+    item_id: item.id,
+    score: nota,
+    motivo_score: `descartado na triagem (${nota} < ${config.runtime.triagemCorte})`,
+    status: 'descartado',
+  };
+}
+
+/**
  * Avalia os itens novos de cada criadora e grava um delivery pendente por item.
  *
  * O scorer é a única parte cara. Se ele falhar num item, o delivery entra como
  * `falho` com o erro registrado — assim o item não é retentado para sempre e a
  * rodada continua.
+ *
+ * Antes dele roda a triagem, que é barata e só dá nota. Quem não passa vira
+ * delivery `descartado` — precisa virar linha no banco, senão o item seria
+ * triado de novo a cada rodada e a economia evaporaria.
  */
 export async function process(): Promise<ResumoProcess> {
   const criadoras = await criadorasAtivas();
-  const resumo: ResumoProcess = { criadoras: criadoras.length, avaliados: 0, falhos: 0 };
+  const resumo: ResumoProcess = { criadoras: criadoras.length, avaliados: 0, falhos: 0, triados: 0 };
 
   for (const creator of criadoras) {
     const nomesDeFonte = await fontesDaCriadora(creator.id);
@@ -135,6 +177,18 @@ export async function process(): Promise<ResumoProcess> {
 
     for (const item of itens) {
       const nomeFonte = nomesDeFonte.get(item.source_id) ?? 'fonte desconhecida';
+
+      const descarte = await descartadoNaTriagem(creator, item, nomeFonte);
+      if (descarte) {
+        const { error } = await db
+          .from('deliveries')
+          .upsert(descarte, { onConflict: 'creator_id,item_id', ignoreDuplicates: true });
+        if (error) {
+          logger.error('falha ao gravar descarte', { itemId: item.id, erro: error.message });
+        }
+        resumo.triados += 1;
+        continue;
+      }
 
       let registro: Record<string, unknown>;
       try {

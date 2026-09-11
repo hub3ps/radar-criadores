@@ -8,7 +8,14 @@ const logger = log.com({ coletor: 'rss' });
 
 const parser = new Parser({
   timeout: 15_000,
-  headers: { 'user-agent': 'radar-criadores/0.1 (+monitor de novidades)' },
+  // User-agent de navegador e `accept` explícito: o Geek Pop News, entre outros,
+  // devolve 406 para agente não reconhecido. Um feed público recusado por causa
+  // do nosso cabeçalho é fonte perdida por motivo bobo.
+  headers: {
+    'user-agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+    accept: 'application/rss+xml, application/xml, text/xml, */*',
+  },
 });
 
 /**

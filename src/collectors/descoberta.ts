@@ -12,7 +12,10 @@ import { log } from '../logger.js';
 const logger = log.com({ componente: 'descoberta' });
 
 const TIMEOUT_MS = 12_000;
-const AGENTE = 'Mozilla/5.0 (compatible; radar-criadores/0.1; +monitor de novidades)';
+// Navegador de verdade: alguns feeds públicos devolvem 406 para agente
+// desconhecido. Perder uma fonte por causa do cabeçalho seria bobo.
+const AGENTE =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 
 const parser = new Parser({ timeout: TIMEOUT_MS, headers: { 'user-agent': AGENTE } });
 
@@ -58,7 +61,7 @@ async function buscar(url: string): Promise<{ corpo: string; tipo: string } | nu
     const resposta = await fetch(url, {
       signal: AbortSignal.timeout(TIMEOUT_MS),
       redirect: 'follow',
-      headers: { 'user-agent': AGENTE, accept: 'application/rss+xml, application/xml, text/html' },
+      headers: { 'user-agent': AGENTE, accept: 'application/rss+xml, application/xml, text/xml, text/html, */*' },
     });
     if (!resposta.ok) return null;
     return { corpo: await resposta.text(), tipo: resposta.headers.get('content-type') ?? '' };
@@ -128,6 +131,29 @@ export async function descobrirFeed(entrada: string): Promise<FeedEncontrado | n
 
   const direto = await validarFeed(url.toString(), nomePadrao);
   if (direto) return direto;
+
+  // Seção antes do site inteiro. Quem indica "cnnbrasil.com.br/pop" quer a
+  // editoria Pop; cair no feed da home traz 482 itens/dia de assunto geral e
+  // afoga o que interessa. O feed da seção é a fonte certa, e mais barata.
+  const secao = url.pathname.replace(/\/+$/, '');
+  if (secao !== '') {
+    for (const sufixo of ['/feed/', '/feed', '/rss', '/rss.xml']) {
+      const encontrado = await validarFeed(
+        new URL(secao + sufixo, url.origin).toString(),
+        `${nomePadrao}${secao.replace(/\//g, ' ')}`.trim(),
+      );
+      if (encontrado) return encontrado;
+    }
+
+    // O `<link rel="alternate">` da própria seção costuma apontar para o feed dela.
+    const pagina = await buscar(url.toString());
+    if (pagina?.tipo.includes('html')) {
+      for (const candidato of feedsDeclarados(pagina.corpo, url)) {
+        const declarado = await validarFeed(candidato, nomePadrao);
+        if (declarado) return declarado;
+      }
+    }
+  }
 
   const home = await buscar(url.origin);
   if (home?.tipo.includes('html')) {

@@ -83,7 +83,10 @@ const Env = z.object({
   TRIAGEM_ATIVA: booleano(false),
   // Abaixo disto o item nem chega ao modelo caro. Deve ficar FOLGADAMENTE
   // abaixo do corte de envio: errar para baixo aqui mata novidade boa.
-  TRIAGEM_CORTE: inteiro(0, 0),
+  // Padrão 4, medido: nenhum item bom recebeu triagem abaixo de 7. O mínimo é 0
+  // só para permitir desligar o descarte sem desligar a triagem; com 0 nada é
+  // barrado, e aí paga-se os dois modelos sem economia nenhuma.
+  TRIAGEM_CORTE: inteiro(4, 0),
 });
 
 function carregar() {

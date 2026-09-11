@@ -5,6 +5,9 @@ import { log } from './logger.js';
 
 const logger = log.com({ componente: 'http' });
 
+/** Quando este processo subiu. Denuncia na hora se o redeploy não pegou. */
+const SUBIU_EM = new Date().toISOString();
+
 /** Webhook maior que isso não é mensagem de WhatsApp — é abuso. */
 const CORPO_MAX_BYTES = 1_000_000;
 
@@ -49,8 +52,26 @@ async function rotear(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const caminho = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
 
   // Healthcheck do Easypanel.
+  //
+  // Devolve também a configuração EFETIVA. Sem isso, a única forma de saber se
+  // um redeploy pegou, ou se uma variável nova entrou, é esperar o efeito
+  // aparecer no banco — o que já custou várias idas e vindas. Só booleanos,
+  // números e nomes de modelo: nada aqui é segredo.
   if (req.method === 'GET' && caminho === '/health') {
-    return responder(res, 200, { status: 'ok', ts: new Date().toISOString() });
+    return responder(res, 200, {
+      status: 'ok',
+      ts: new Date().toISOString(),
+      subiu_em: SUBIU_EM,
+      config: {
+        scorer: config.openrouter.modelo,
+        triagem: config.runtime.triagemAtiva
+          ? { modelo: config.openrouter.modeloTriagem, corte: config.runtime.triagemCorte }
+          : 'desligada',
+        regras: config.regras,
+        social: config.apify.dryRun ? 'dry-run' : `a cada ${config.cadencia.socialIntervaloMin} min`,
+        rss: `a cada ${config.cadencia.rssIntervaloMin} min`,
+      },
+    });
   }
 
   if (req.method === 'POST' && caminho.startsWith('/webhook/evolution')) {

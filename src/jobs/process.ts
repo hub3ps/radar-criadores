@@ -1,3 +1,5 @@
+import { filtroScore } from '../core/regras.js';
+import { jaRecebida, type Recebido, type Repeticao } from '../core/repetidas.js';
 import { ErroScorer, pontuar } from '../core/scorer.js';
 import { triar } from '../core/triagem.js';
 import { config } from '../config.js';
@@ -13,7 +15,18 @@ export interface ResumoProcess {
   falhos: number;
   /** Descartados na triagem, sem chegar ao modelo caro. */
   triados: number;
+  /** Pontuados, mas eram a mesma notícia que ela já recebeu por outra fonte. */
+  repetidos: number;
 }
+
+/**
+ * Por quanto tempo o que ela recebeu continua valendo como "já recebido".
+ * O maior atraso medido entre o Deadline e a versão traduzida foi de 26 h.
+ */
+const JANELA_REPETICAO_HORAS = 72;
+
+/** Teto da lista que o modelo lê, para o prompt não crescer sem limite num dia de enxurrada. */
+const LIMITE_RECEBIDOS = 80;
 
 async function criadorasAtivas(): Promise<Creator[]> {
   const { data, error } = await db.from('creators').select('*').eq('ativo', true);
@@ -149,6 +162,94 @@ async function descartadoNaTriagem(
 }
 
 /**
+ * O que ela já recebeu ou vai receber: enviados, e pendentes que passam do
+ * corte, os mais recentes primeiro. Descartados e falhos ficam de fora — se a
+ * primeira versão não chegou até ela, a segunda não é repetição.
+ */
+async function recebidosRecentes(creator: Creator): Promise<Recebido[]> {
+  const desde = new Date(Date.now() - JANELA_REPETICAO_HORAS * 3_600_000).toISOString();
+
+  const base = db
+    .from('deliveries')
+    .select('id, resumo, items(titulo, sources(nome))')
+    .eq('creator_id', creator.id)
+    .gte('created_at', desde);
+
+  // Pendente abaixo do corte vai ser descartado pelo dispatch: não chega nela.
+  const filtrada = config.regras.filtroScoreAtivo
+    ? base.or(`status.eq.enviado,and(status.eq.pendente,score.gte.${creator.corte_score})`)
+    : base.in('status', ['pendente', 'enviado']);
+
+  const { data, error } = await filtrada
+    .order('created_at', { ascending: false })
+    .limit(LIMITE_RECEBIDOS);
+
+  if (error) throw new Error(`busca do que ela já recebeu: ${error.message}`);
+
+  // O join do PostgREST devolve objeto ou lista de um item, conforme a FK.
+  type UmOuLista<T> = T | T[] | null;
+  type Linha = {
+    id: string;
+    resumo: string | null;
+    items: UmOuLista<{ titulo: string; sources: UmOuLista<{ nome: string }> }>;
+  };
+  const primeiro = <T>(v: UmOuLista<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
+
+  const recebidos: Recebido[] = [];
+  for (const linha of (data ?? []) as unknown as Linha[]) {
+    const item = primeiro(linha.items);
+    if (!item) continue;
+    recebidos.push({
+      id: linha.id,
+      titulo: item.titulo,
+      resumo: linha.resumo,
+      nomeFonte: primeiro(item.sources)?.nome ?? 'fonte desconhecida',
+    });
+  }
+  return recebidos;
+}
+
+/**
+ * A mesma notícia que ela já recebeu, vinda de outra fonte?
+ *
+ * Roda DEPOIS do scorer, e só no item que vai chegar nela. Antes do scorer
+ * pouparia o modelo caro nas repetições, mas a checagem rodaria em todo item
+ * que passa da triagem — e a maioria deles cai no corte de nota em seguida.
+ * Repetição é rara (3 em 85 envios); item pontuado abaixo do corte, não. Assim
+ * a checagem roda umas poucas vezes por dia, e compara resumo com resumo.
+ *
+ * Falha aqui deixa o item passar, pela mesma razão da triagem: o pior caso vira
+ * uma mensagem repetida, nunca uma novidade perdida.
+ */
+async function repeticaoDe(
+  creator: Creator,
+  item: Item,
+  novo: Omit<Recebido, 'id'>,
+  recebidos: readonly Recebido[],
+): Promise<Repeticao | null> {
+  if (!config.runtime.barrarRepetidas) return null;
+
+  let repeticao: Repeticao | null;
+  try {
+    repeticao = await jaRecebida({ novo, recebidos });
+  } catch (erro) {
+    logger.warn('checagem de repetição falhou — item segue para envio', { itemId: item.id, erro });
+    return null;
+  }
+
+  if (repeticao) {
+    logger.info('notícia repetida barrada', {
+      criadora: creator.nome,
+      titulo: item.titulo,
+      fonte: novo.nomeFonte,
+      original: repeticao.original.titulo,
+      fonteOriginal: repeticao.original.nomeFonte,
+    });
+  }
+  return repeticao;
+}
+
+/**
  * Avalia os itens novos de cada criadora e grava um delivery pendente por item.
  *
  * O scorer é a única parte cara. Se ele falhar num item, o delivery entra como
@@ -158,10 +259,20 @@ async function descartadoNaTriagem(
  * Antes dele roda a triagem, que é barata e só dá nota. Quem não passa vira
  * delivery `descartado` — precisa virar linha no banco, senão o item seria
  * triado de novo a cada rodada e a economia evaporaria.
+ *
+ * Depois dele, o item que vai chegar nela passa pela checagem de repetição.
+ * Repetido vira `descartado` com a nota e o resumo guardados, e `duplicata_de`
+ * apontando para o que ela já recebeu.
  */
 export async function process(): Promise<ResumoProcess> {
   const criadoras = await criadorasAtivas();
-  const resumo: ResumoProcess = { criadoras: criadoras.length, avaliados: 0, falhos: 0, triados: 0 };
+  const resumo: ResumoProcess = {
+    criadoras: criadoras.length,
+    avaliados: 0,
+    falhos: 0,
+    triados: 0,
+    repetidos: 0,
+  };
 
   for (const creator of criadoras) {
     const nomesDeFonte = await fontesDaCriadora(creator.id);
@@ -174,6 +285,10 @@ export async function process(): Promise<ResumoProcess> {
     if (itens.length === 0) continue;
 
     logger.debug('itens a avaliar', { criadora: creator.nome, itens: itens.length });
+
+    // Lido uma vez por rodada e atualizado a cada item aprovado: se o Deadline e
+    // a Capricho chegam na mesma rodada, a segunda já enxerga a primeira.
+    const recebidos = config.runtime.barrarRepetidas ? await recebidosRecentes(creator) : [];
 
     for (const item of itens) {
       const nomeFonte = nomesDeFonte.get(item.source_id) ?? 'fonte desconhecida';
@@ -191,8 +306,13 @@ export async function process(): Promise<ResumoProcess> {
       }
 
       let registro: Record<string, unknown>;
+      let aprovado: Omit<Recebido, 'id'> | null = null;
       try {
         const nota = await pontuar({ creator, item, nomeFonte });
+
+        const novo = { titulo: item.titulo, resumo: nota.resumo, nomeFonte };
+        const chega = filtroScore(nota.score, creator.corte_score, config.regras.filtroScoreAtivo).liberado;
+        const repeticao = chega ? await repeticaoDe(creator, item, novo, recebidos) : null;
 
         registro = {
           creator_id: creator.id,
@@ -202,7 +322,17 @@ export async function process(): Promise<ResumoProcess> {
           resumo: nota.resumo,
           gancho: nota.gancho,
           status: 'pendente',
+          // Como os descartes do dispatch: o motivo vai em `erro`, e a nota do
+          // scorer fica intacta em `motivo_score`.
+          ...(repeticao && {
+            status: 'descartado',
+            erro: `repete o que ela já recebeu: ${repeticao.motivo}`,
+            duplicata_de: repeticao.original.id,
+          }),
         };
+
+        if (repeticao) resumo.repetidos += 1;
+        else if (chega) aprovado = novo;
         resumo.avaliados += 1;
       } catch (erro) {
         const mensagem = erro instanceof ErroScorer ? erro.message : String(erro);
@@ -220,13 +350,17 @@ export async function process(): Promise<ResumoProcess> {
 
       // `ignoreDuplicates` protege o unique (creator_id, item_id) se duas
       // rodadas se sobrepuserem.
-      const { error } = await db
+      const { data: gravado, error } = await db
         .from('deliveries')
-        .upsert(registro, { onConflict: 'creator_id,item_id', ignoreDuplicates: true });
+        .upsert(registro, { onConflict: 'creator_id,item_id', ignoreDuplicates: true })
+        .select('id');
 
       if (error) {
         logger.error('falha ao gravar delivery', { criadora: creator.nome, itemId: item.id, erro: error.message });
       }
+
+      const id = (gravado as { id: string }[] | null)?.[0]?.id;
+      if (aprovado && id) recebidos.unshift({ id, ...aprovado });
     }
   }
 

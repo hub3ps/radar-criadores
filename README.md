@@ -205,6 +205,7 @@ npm run job -- dispatch
 | `OPENROUTER_MODELO_TRIAGEM` | `anthropic/claude-haiku-4.5` | Modelo barato da triagem |
 | `TRIAGEM_ATIVA` | `false` | Liga a triagem antes do scorer |
 | `TRIAGEM_CORTE` | `4` | Abaixo disto o item nem chega ao modelo caro |
+| `BARRAR_REPETIDAS` | `true` | Barra a mesma notícia vinda de outra fonte |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Trocar só para apontar noutro gateway |
 | `OPENROUTER_REASONING_EFFORT` | `none` | `none` / `low` / `medium` / `high` |
 
@@ -277,6 +278,41 @@ em corte algum de 1 a 5, com 77% de economia no corte escolhido.
 
 Quem não passa vira delivery `descartado` com a nota da triagem — precisa virar
 linha no banco, senão o item seria triado de novo a cada rodada.
+
+## Notícia repetida
+
+O Deadline publica em inglês e, de 3 a 26 horas depois, CinePOP e Capricho
+publicam o mesmo fato traduzido, com o título brasileiro da obra. URL, slug e
+título mudam todos, então o dedupe da coleta não pega — e a criadora recebia a
+mesma escalação de elenco duas, três vezes.
+
+A checagem roda **depois do scorer, e só no item que passaria do corte**. Antes
+do scorer ela pouparia o modelo caro nas repetições, mas rodaria em todo item que
+passa da triagem, e a maioria cai no corte de nota logo em seguida. Repetição é
+rara (3 em 85 envios); então é mais barato pagar o scorer nela do que checar tudo.
+
+Três camadas, da mais barata para a mais cara:
+
+| Caso | Como decide | Custo |
+|---|---|---|
+| Mesma fonte, mesmo título (a URL mudou) | código | zero |
+| Apanhado ("Everything We Know…", "tudo o que sabemos") | código: nunca repete | zero |
+| O resto | modelo barato, contra o que ela recebeu em 72 h | ~US$ 0,005 |
+
+A linha é o **anúncio**, não o assunto. O modelo só classifica cada lado como
+anúncio (escalação, data, trailer, renovação, cancelamento, prêmio) ou outro
+(crítica, análise, entrevista, reação) e diz se é a mesma manchete. A regra "só
+anúncio repete anúncio" fica no código. Crítica, final explicado e "terá 2ª
+temporada?" sobre a mesma série continuam chegando, porque são vídeos diferentes
+para ela. Na dúvida o item passa, e falha da checagem também deixa passar.
+
+Repetido vira delivery `descartado` com a nota e o resumo guardados, o motivo em
+`erro` e `duplicata_de` apontando para o delivery que ela já recebeu.
+
+`src/testing/repetidas-validar.ts` repassa o histórico real pelo detector. Na
+última medição, antes da regra do apanhado: 14 de 15 repetições barradas, e 1 de
+43 matérias diferentes barrada por engano — justamente um apanhado. O script
+estima o custo antes de gastar e recusa rodar acima do teto.
 
 ## Quão recente é o que ela recebe
 

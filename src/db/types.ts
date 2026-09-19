@@ -73,6 +73,8 @@ export interface Delivery {
   feedback_em: string | null;
   /** id da mensagem de entrada que gerou o feedback. Chave de idempotência. */
   feedback_message_id: string | null;
+  /** Delivery que já levou este mesmo fato até ela, vindo de outra fonte. */
+  duplicata_de: string | null;
   created_at: string;
 }
 

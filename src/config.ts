@@ -87,6 +87,10 @@ const Env = z.object({
   // só para permitir desligar o descarte sem desligar a triagem; com 0 nada é
   // barrado, e aí paga-se os dois modelos sem economia nenhuma.
   TRIAGEM_CORTE: inteiro(4, 0),
+  // Barra a mesma notícia vinda de outra fonte, depois do scorer e só no que
+  // passaria do corte. Ligado por padrão: não é controle de ruído da
+  // calibragem — repetição não ensina nada sobre onde fica o corte.
+  BARRAR_REPETIDAS: booleano(true),
 });
 
 function carregar() {
@@ -154,6 +158,7 @@ function carregar() {
       cadastroMaxFontes: e.CADASTRO_MAX_FONTES,
       triagemAtiva: e.TRIAGEM_ATIVA,
       triagemCorte: e.TRIAGEM_CORTE,
+      barrarRepetidas: e.BARRAR_REPETIDAS,
     },
   });
 }

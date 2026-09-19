@@ -67,6 +67,7 @@ async function rotear(req: IncomingMessage, res: ServerResponse): Promise<void> 
         triagem: config.runtime.triagemAtiva
           ? { modelo: config.openrouter.modeloTriagem, corte: config.runtime.triagemCorte }
           : 'desligada',
+        barrar_repetidas: config.runtime.barrarRepetidas,
         regras: config.regras,
         social: config.apify.dryRun ? 'dry-run' : `a cada ${config.cadencia.socialIntervaloMin} min`,
         rss: `a cada ${config.cadencia.rssIntervaloMin} min`,

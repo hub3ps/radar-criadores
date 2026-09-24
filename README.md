@@ -443,6 +443,28 @@ A voz importa mais do que parecia. A criadora apontou que, se ela e outra
 receberem a mesma matéria com o mesmo gancho, abrem o vídeo igual — é a voz de
 cada uma no perfil que separa os dois.
 
+### Instagram não traz post novo — a corrigir
+
+Medido em 24/09: o `@Primevideobr` não tem item novo desde 10/09 e o
+`@hollywoodreporter` desde 11/09, embora os dois postem todo dia. Em 7 dias os
+quatro perfis renderam 10 itens, nenhum enviado.
+
+A causa provável: com `resultsLimit: 3`, o actor devolve sempre os mesmos
+posts — os fixados no topo do perfil, ou os mesmos antigos. O dedupe descarta
+todos, e o post novo nunca entra nos 3. São 4 perfis × 24 rodadas × 3
+resultados = ~288 resultados cobrados por dia para quase nada novo. Mesmo no
+crédito gratuito da Apify, é crédito gasto à toa e novidade perdida.
+
+O conserto, em `montarInput` (`src/collectors/social/apify.ts`):
+
+- `skipPinnedPosts: true` — o `onlyPostsNewerThan` sozinho não tira os fixados
+- `onlyPostsNewerThan` com a `ultima_coleta` da fonte: a cobrança é por
+  resultado, então o custo passa a acompanhar o volume real de posts novos,
+  e não a cadência
+- de quebra: não coletar fonte sem nenhuma criadora ativa vinculada
+
+Validar com `src/testing/apify-check.ts` num perfil travado antes de subir.
+
 ### Outras pendências
 
 - Substituir o `perfil_texto` rascunhado pelo Claude por um escrito pela criadora
